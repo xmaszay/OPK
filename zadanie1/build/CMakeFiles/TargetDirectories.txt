@@ -1,0 +1,7 @@
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/robot_lib.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/robot_demo.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/test_environment.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/test_lidar.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/test.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/edit_cache.dir
+/home/peter/Desktop/school/OPK/zadanie1/build/CMakeFiles/rebuild_cache.dir

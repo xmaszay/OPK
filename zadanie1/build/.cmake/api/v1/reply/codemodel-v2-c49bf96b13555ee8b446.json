@@ -1,0 +1,87 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "robot_simulator",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "robot_demo::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-robot_demo-a2caa1961d1eaddea3e6.json",
+					"name" : "robot_demo",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "robot_lib::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-robot_lib-e704b3e0c2000d3a0505.json",
+					"name" : "robot_lib",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_environment::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_environment-688cd94554dea0d45951.json",
+					"name" : "test_environment",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_lidar::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_lidar-bc7230bb677dc8986f3b.json",
+					"name" : "test_lidar",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/peter/Desktop/school/OPK/zadanie1/build",
+		"source" : "/home/peter/Desktop/school/OPK/zadanie1"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}
