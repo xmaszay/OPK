@@ -1,2 +1,0 @@
-/usr/bin/ar qc librobot_lib.a CMakeFiles/robot_lib.dir/environment/Environment.cpp.o CMakeFiles/robot_lib.dir/lidar/Lidar.cpp.o CMakeFiles/robot_lib.dir/canvas/Canvas.cpp.o
-/usr/bin/ranlib librobot_lib.a
