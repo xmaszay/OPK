@@ -1,0 +1,1 @@
+printf "build/\n.vscode/\n*.o\n*.out\n*.exe\n*.a\n*.log\ncompile_commands.json\nCMakeFiles/\nCMakeCache.txt\nTesting/\n" > .gitignore
