@@ -1,0 +1,91 @@
+map_node:
+  ros__parameters:
+    map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+    map_resolution: 0.02
+
+player1:
+  robot_node:
+    ros__parameters:
+      map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+      map_resolution: 0.02
+      initial_x: 20.0
+      initial_y: 8.0
+      initial_theta: 0.0
+      ghost_mode: false
+      linear_acceleration: 3.0
+      angular_acceleration: 2.0
+      linear_emergency_deceleration: 2.0
+      angular_emergency_deceleration: 2.0
+      command_duration: 0.5
+      simulation_period_ms: 20
+      publish_period_ms: 50
+
+  lidar_node:
+    ros__parameters:
+      map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+      map_resolution: 0.02
+      base_frame_id: "player1/base_link"
+      max_range: 8.0
+      beam_count: 360
+      first_ray_angle: -3.14159
+      last_ray_angle: 3.14159
+      publish_period_ms: 100
+
+player2:
+  robot_node:
+    ros__parameters:
+      map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+      map_resolution: 0.02
+      initial_x: 23.0
+      initial_y: 8.0
+      initial_theta: 3.14
+      ghost_mode: true
+      linear_acceleration: 3.0
+      angular_acceleration: 2.0
+      linear_emergency_deceleration: 2.0
+      angular_emergency_deceleration: 2.0
+      command_duration: 0.5
+      simulation_period_ms: 20
+      publish_period_ms: 50
+
+  lidar_node:
+    ros__parameters:
+      map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+      map_resolution: 0.02
+      base_frame_id: "player2/base_link"
+      max_range: 8.0
+      beam_count: 360
+      first_ray_angle: -3.14159
+      last_ray_angle: 3.14159
+      publish_period_ms: 100
+
+game_node:
+  ros__parameters:
+    map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
+    map_resolution: 0.02
+    max_capacity: 3
+    trash_count: 12
+    trash_radius: 0.25
+    collect_distance: 0.7
+    station_x: 21.0
+    station_y: 7.5
+    station_radius: 0.8
+
+    circle_obstacles_x: [8.0, 16.0]
+    circle_obstacles_y: [6.0, 13.0]
+    circle_obstacles_radius: [0.8, 0.9]
+
+    rectangle_obstacles_x: [11.0, 18.0]
+    rectangle_obstacles_y: [10.0, 5.0]
+    rectangle_obstacles_width: [1.5, 2.0]
+    rectangle_obstacles_height: [0.8, 1.0]
+
+bot_node:
+  ros__parameters:
+    max_capacity: 3
+    station_x: 21.0
+    station_y: 7.5
+    target_distance: 0.8
+    linear_speed: 1.5
+    angular_gain: 1.5
+    angle_tolerance: 0.25

@@ -15,6 +15,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(zadanie2_interfaces REQUIRED)
 
 set(ZADANIE1_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../zadanie1)
 
@@ -52,7 +53,6 @@ ament_target_dependencies(robot_node
   std_msgs
   nav_msgs
   sensor_msgs
-  visualization_msgs
   tf2
   tf2_ros
 )
@@ -116,7 +116,7 @@ target_include_directories(game_node PUBLIC
 ament_target_dependencies(game_node
   rclcpp
   nav_msgs
-  visualization_msgs
+  zadanie2_interfaces
 )
 
 target_link_libraries(game_node
@@ -143,7 +143,19 @@ ament_target_dependencies(bot_node
   rclcpp
   geometry_msgs
   nav_msgs
+  zadanie2_interfaces
+)
+
+
+add_executable(visualization_node
+  src/visualization_node.cpp
+)
+
+ament_target_dependencies(visualization_node
+  rclcpp
+  nav_msgs
   visualization_msgs
+  zadanie2_interfaces
 )
 
 
@@ -154,11 +166,17 @@ install(TARGETS
   game_node
   keyboard_teleop_node
   bot_node
+  visualization_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 

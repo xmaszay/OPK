@@ -6,14 +6,14 @@
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "visualization_msgs/msg/marker_array.hpp"
+
+#include "zadanie2_interfaces/msg/game_state.hpp"
 
 struct Target
 {
     int id;
     double x;
     double y;
-    bool active;
 };
 
 class BotNode : public rclcpp::Node
@@ -44,10 +44,10 @@ public:
             std::bind(&BotNode::odomCallback, this, std::placeholders::_1)
         );
 
-        markers_sub_ = this->create_subscription<visualization_msgs::msg::MarkerArray>(
-            "/game_markers",
+        game_state_sub_ = this->create_subscription<zadanie2_interfaces::msg::GameState>(
+            "/game_state",
             10,
-            std::bind(&BotNode::markersCallback, this, std::placeholders::_1)
+            std::bind(&BotNode::gameStateCallback, this, std::placeholders::_1)
         );
 
         cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
@@ -78,23 +78,31 @@ private:
         has_odom_ = true;
     }
 
-    void markersCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg)
+    void gameStateCallback(const zadanie2_interfaces::msg::GameState::SharedPtr msg)
     {
-        for (const auto& marker : msg->markers) {
-            if (marker.ns == "trash") {
-                if (marker.action == visualization_msgs::msg::Marker::DELETE) {
-                    targets_.erase(marker.id);
-                } else if (marker.action == visualization_msgs::msg::Marker::ADD) {
-                    Target target;
-                    target.id = marker.id;
-                    target.x = marker.pose.position.x;
-                    target.y = marker.pose.position.y;
-                    target.active = true;
+        targets_.clear();
 
-                    targets_[marker.id] = target;
-                }
+        for (size_t i = 0; i < msg->trash_id.size(); ++i) {
+            if (i >= msg->trash_x.size() ||
+                i >= msg->trash_y.size() ||
+                i >= msg->trash_collected.size()) {
+                continue;
             }
+
+            if (msg->trash_collected[i]) {
+                continue;
+            }
+
+            Target target;
+            target.id = msg->trash_id[i];
+            target.x = msg->trash_x[i];
+            target.y = msg->trash_y[i];
+
+            targets_[target.id] = target;
         }
+
+        station_x_ = msg->station_x;
+        station_y_ = msg->station_y;
     }
 
     double normalizeAngle(double angle) const
@@ -176,17 +184,14 @@ private:
                 current_capacity_ = 0;
                 RCLCPP_INFO(this->get_logger(), "Bot unloaded trash at station");
             } else {
-                if (targets_.find(current_target_id_) != targets_.end()) {
-                    targets_.erase(current_target_id_);
-                    current_capacity_++;
+                current_capacity_++;
 
-                    RCLCPP_INFO(
-                        this->get_logger(),
-                        "Bot reached trash. Local capacity: %d/%d",
-                        current_capacity_,
-                        max_capacity_
-                    );
-                }
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "Bot reached trash. Local capacity: %d/%d",
+                    current_capacity_,
+                    max_capacity_
+                );
             }
 
             publishStop();
@@ -244,7 +249,7 @@ private:
     std::map<int, Target> targets_;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-    rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr markers_sub_;
+    rclcpp::Subscription<zadanie2_interfaces::msg::GameState>::SharedPtr game_state_sub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 };

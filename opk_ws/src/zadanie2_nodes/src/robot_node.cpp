@@ -3,12 +3,12 @@
 #include <chrono>
 #include <string>
 #include <cmath>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "visualization_msgs/msg/marker.hpp"
 
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
@@ -29,11 +29,20 @@ public:
         );
         this->declare_parameter<double>("map_resolution", 0.02);
 
-        this->declare_parameter<double>("initial_x", 22.0);
-        this->declare_parameter<double>("initial_y", 7.0);
+        this->declare_parameter<double>("initial_x", 20.0);
+        this->declare_parameter<double>("initial_y", 8.0);
         this->declare_parameter<double>("initial_theta", 0.0);
 
         this->declare_parameter<bool>("ghost_mode", false);
+
+        this->declare_parameter<std::vector<double>>("circle_obstacles_x", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("circle_obstacles_y", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("circle_obstacles_radius", std::vector<double>{});
+
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height", std::vector<double>{});
 
         this->declare_parameter<double>("linear_acceleration", 3.0);
         this->declare_parameter<double>("angular_acceleration", 2.0);
@@ -51,17 +60,19 @@ public:
 
         env_ = std::make_shared<environment::Environment>(env_config);
 
-       robot::Robot::CollisionCb collision_cb = nullptr;
+        loadObstaclesFromParameters();
 
-if (!ghost_mode_) {
-    collision_cb = [this](geometry::RobotState state) {
-        return env_->isOccupied(state.x, state.y);
-    };
-} else {
-    collision_cb = [](geometry::RobotState) {
-        return false;
-    };
-}
+        robot::Robot::CollisionCb collision_cb = nullptr;
+
+        if (!ghost_mode_) {
+            collision_cb = [this](geometry::RobotState state) {
+                return isOccupiedByMapOrObstacle(state.x, state.y);
+            };
+        } else {
+            collision_cb = [](geometry::RobotState) {
+                return false;
+            };
+        }
 
         robot::Config robot_config;
         robot_config.accelerations.linear =
@@ -88,7 +99,7 @@ if (!ghost_mode_) {
         initial_state.theta = this->get_parameter("initial_theta").as_double();
         initial_state.velocity = {0.0, 0.0};
 
-        if (!ghost_mode_ && env_->isOccupied(initial_state.x, initial_state.y)) {
+        if (!ghost_mode_ && isOccupiedByMapOrObstacle(initial_state.x, initial_state.y)) {
             RCLCPP_WARN(
                 this->get_logger(),
                 "Initial position %.2f %.2f is occupied. Searching nearest free position...",
@@ -133,11 +144,6 @@ if (!ghost_mode_) {
             10
         );
 
-        marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
-            "robot_marker",
-            10
-        );
-
         int publish_period_ms = this->get_parameter("publish_period_ms").as_int();
 
         timer_ = this->create_wall_timer(
@@ -155,6 +161,110 @@ if (!ghost_mode_) {
     }
 
 private:
+    struct CircleObstacle
+    {
+        double x;
+        double y;
+        double radius;
+    };
+
+    struct RectangleObstacle
+    {
+        double x;
+        double y;
+        double width;
+        double height;
+    };
+
+    void loadObstaclesFromParameters()
+    {
+        auto circle_x = this->get_parameter("circle_obstacles_x").as_double_array();
+        auto circle_y = this->get_parameter("circle_obstacles_y").as_double_array();
+        auto circle_r = this->get_parameter("circle_obstacles_radius").as_double_array();
+
+        if (circle_x.size() == circle_y.size() && circle_x.size() == circle_r.size()) {
+            for (size_t i = 0; i < circle_x.size(); ++i) {
+                if (circle_r[i] > 0.0) {
+                    circle_obstacles_.push_back({circle_x[i], circle_y[i], circle_r[i]});
+                }
+            }
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Circle obstacle parameter arrays have different sizes.");
+        }
+
+        auto rect_x = this->get_parameter("rectangle_obstacles_x").as_double_array();
+        auto rect_y = this->get_parameter("rectangle_obstacles_y").as_double_array();
+        auto rect_w = this->get_parameter("rectangle_obstacles_width").as_double_array();
+        auto rect_h = this->get_parameter("rectangle_obstacles_height").as_double_array();
+
+        if (rect_x.size() == rect_y.size() &&
+            rect_x.size() == rect_w.size() &&
+            rect_x.size() == rect_h.size()) {
+            for (size_t i = 0; i < rect_x.size(); ++i) {
+                if (rect_w[i] > 0.0 && rect_h[i] > 0.0) {
+                    rectangle_obstacles_.push_back({rect_x[i], rect_y[i], rect_w[i], rect_h[i]});
+                }
+            }
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Rectangle obstacle parameter arrays have different sizes.");
+        }
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Loaded %zu circle obstacles and %zu rectangle obstacles.",
+            circle_obstacles_.size(),
+            rectangle_obstacles_.size()
+        );
+    }
+
+    bool isInsideCircleObstacle(double x, double y) const
+    {
+        for (const auto& obstacle : circle_obstacles_) {
+            double dx = x - obstacle.x;
+            double dy = y - obstacle.y;
+
+            if (std::sqrt(dx * dx + dy * dy) <= obstacle.radius) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool isInsideRectangleObstacle(double x, double y) const
+    {
+        for (const auto& obstacle : rectangle_obstacles_) {
+            bool inside =
+                x >= obstacle.x - obstacle.width * 0.5 &&
+                x <= obstacle.x + obstacle.width * 0.5 &&
+                y >= obstacle.y - obstacle.height * 0.5 &&
+                y <= obstacle.y + obstacle.height * 0.5;
+
+            if (inside) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool isOccupiedByMapOrObstacle(double x, double y) const
+    {
+        if (env_->isOccupied(x, y)) {
+            return true;
+        }
+
+        if (isInsideCircleObstacle(x, y)) {
+            return true;
+        }
+
+        if (isInsideRectangleObstacle(x, y)) {
+            return true;
+        }
+
+        return false;
+    }
+
     geometry::RobotState findNearestFreeState(const geometry::RobotState& original_state)
     {
         geometry::RobotState free_state = original_state;
@@ -168,7 +278,7 @@ private:
                     double x = original_state.x + dx;
                     double y = original_state.y + dy;
 
-                    if (!env_->isOccupied(x, y)) {
+                    if (!isOccupiedByMapOrObstacle(x, y)) {
                         free_state.x = x;
                         free_state.y = y;
                         free_state.velocity = {0.0, 0.0};
@@ -236,48 +346,6 @@ private:
         transform.transform.rotation.w = q.w();
 
         tf_broadcaster_->sendTransform(transform);
-
-        visualization_msgs::msg::Marker marker;
-        marker.header.stamp = this->get_clock()->now();
-        marker.header.frame_id = "map";
-
-        marker.ns = this->get_namespace();
-        marker.id = 0;
-        marker.type = visualization_msgs::msg::Marker::CYLINDER;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-
-        marker.pose.position.x = state.x;
-        marker.pose.position.y = state.y;
-        marker.pose.position.z = 0.10;
-
-        marker.pose.orientation.x = q.x();
-        marker.pose.orientation.y = q.y();
-        marker.pose.orientation.z = q.z();
-        marker.pose.orientation.w = q.w();
-
-        marker.scale.x = 0.7;
-        marker.scale.y = 0.7;
-        marker.scale.z = 0.2;
-
-        if (ghost_mode_) {
-            marker.color.r = 0.7f;
-            marker.color.g = 0.2f;
-            marker.color.b = 1.0f;
-            marker.color.a = 0.8f;
-        } else {
-            marker.color.r = 0.0f;
-            marker.color.g = 0.3f;
-            marker.color.b = 1.0f;
-            marker.color.a = 1.0f;
-        }
-
-        if (!ghost_mode_ && robot_->isInCollision()) {
-            marker.color.r = 1.0f;
-            marker.color.g = 0.0f;
-            marker.color.b = 0.0f;
-        }
-
-        marker_pub_->publish(marker);
     }
 
     std::shared_ptr<environment::Environment> env_;
@@ -285,12 +353,14 @@ private:
 
     bool ghost_mode_ = false;
 
+    std::vector<CircleObstacle> circle_obstacles_;
+    std::vector<RectangleObstacle> rectangle_obstacles_;
+
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     std::string base_frame_id_;
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
 

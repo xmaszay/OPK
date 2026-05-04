@@ -6,10 +6,20 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "visualization_msgs/msg/marker.hpp"
-#include "visualization_msgs/msg/marker_array.hpp"
+
+#include "zadanie2_interfaces/msg/game_state.hpp"
+#include "zadanie2_interfaces/srv/reset_game.hpp"
 
 #include "environment/Environment.h"
+
+class GameConfigException : public std::runtime_error
+{
+public:
+    explicit GameConfigException(const std::string& message)
+        : std::runtime_error(message)
+    {
+    }
+};
 
 struct Trash
 {
@@ -19,6 +29,125 @@ struct Trash
     double y;
     double radius;
     bool collected;
+};
+
+class TrashFactory
+{
+public:
+    static Trash createTrash(
+        int id,
+        const std::string& type,
+        double x,
+        double y,
+        double radius)
+    {
+        if (type != "paper" && type != "plastic" && type != "glass") {
+            throw GameConfigException("Unknown trash type: " + type);
+        }
+
+        return Trash{
+            id,
+            type,
+            x,
+            y,
+            radius,
+            false
+        };
+    }
+};
+
+class GameObject
+{
+public:
+    GameObject(double x, double y, double radius)
+        : x_(x), y_(y), radius_(radius)
+    {
+    }
+
+    virtual ~GameObject() = default;
+
+    double getX() const { return x_; }
+    double getY() const { return y_; }
+    double getRadius() const { return radius_; }
+
+    virtual std::string getObjectType() const = 0;
+    virtual bool contains(double x, double y) const = 0;
+
+protected:
+    double x_;
+    double y_;
+    double radius_;
+};
+
+class StationObject : public GameObject
+{
+public:
+    StationObject(double x, double y, double radius)
+        : GameObject(x, y, radius)
+    {
+    }
+
+    std::string getObjectType() const override
+    {
+        return "station";
+    }
+
+    bool contains(double x, double y) const override
+    {
+        double dx = x - x_;
+        double dy = y - y_;
+        return std::sqrt(dx * dx + dy * dy) <= radius_;
+    }
+};
+
+class CircleObstacleObject : public GameObject
+{
+public:
+    CircleObstacleObject(double x, double y, double radius)
+        : GameObject(x, y, radius)
+    {
+    }
+
+    std::string getObjectType() const override
+    {
+        return "circle_obstacle";
+    }
+
+    bool contains(double x, double y) const override
+    {
+        double dx = x - x_;
+        double dy = y - y_;
+        return std::sqrt(dx * dx + dy * dy) <= radius_;
+    }
+};
+
+class RectangleObstacleObject : public GameObject
+{
+public:
+    RectangleObstacleObject(double x, double y, double width, double height)
+        : GameObject(x, y, 0.0), width_(width), height_(height)
+    {
+    }
+
+    std::string getObjectType() const override
+    {
+        return "rectangle_obstacle";
+    }
+
+    bool contains(double x, double y) const override
+    {
+        return x >= x_ - width_ * 0.5 &&
+               x <= x_ + width_ * 0.5 &&
+               y >= y_ - height_ * 0.5 &&
+               y <= y_ + height_ * 0.5;
+    }
+
+    double getWidth() const { return width_; }
+    double getHeight() const { return height_; }
+
+private:
+    double width_;
+    double height_;
 };
 
 struct PlayerState
@@ -60,9 +189,20 @@ public:
         this->declare_parameter<double>("station_y", 7.5);
         this->declare_parameter<double>("station_radius", 0.8);
 
+        this->declare_parameter<std::vector<double>>("circle_obstacles_x", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("circle_obstacles_y", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("circle_obstacles_radius", std::vector<double>{});
+
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width", std::vector<double>{});
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height", std::vector<double>{});
+
         environment::Config env_config;
         env_config.map_filename = this->get_parameter("map_path").as_string();
         env_config.resolution = this->get_parameter("map_resolution").as_double();
+
+        validateConfig(env_config);
 
         env_ = std::make_shared<environment::Environment>(env_config);
 
@@ -76,6 +216,10 @@ public:
         station_y_ = this->get_parameter("station_y").as_double();
         station_radius_ = this->get_parameter("station_radius").as_double();
 
+        station_ = std::make_unique<StationObject>(station_x_, station_y_, station_radius_);
+
+        loadObstaclesFromParameters();
+
         player1_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
             "/player1/odom",
             10,
@@ -88,9 +232,19 @@ public:
             std::bind(&GameNode::player2OdomCallback, this, std::placeholders::_1)
         );
 
-        marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "game_markers",
+        game_state_pub_ = this->create_publisher<zadanie2_interfaces::msg::GameState>(
+            "game_state",
             10
+        );
+
+        reset_service_ = this->create_service<zadanie2_interfaces::srv::ResetGame>(
+            "reset_game",
+            std::bind(
+                &GameNode::resetGameCallback,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2
+            )
         );
 
         int trash_count = this->get_parameter("trash_count").as_int();
@@ -103,12 +257,101 @@ public:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "game_node started. Generated %zu trash objects only on free map cells.",
+            "game_node started. Generated %zu trash objects.",
             trash_.size()
         );
     }
 
 private:
+    void validateConfig(const environment::Config& env_config)
+    {
+        if (env_config.resolution <= 0.0) {
+            throw GameConfigException("map_resolution must be positive");
+        }
+
+        if (this->get_parameter("max_capacity").as_int() <= 0) {
+            throw GameConfigException("max_capacity must be positive");
+        }
+
+        if (this->get_parameter("trash_count").as_int() <= 0) {
+            throw GameConfigException("trash_count must be positive");
+        }
+
+        if (this->get_parameter("trash_radius").as_double() <= 0.0) {
+            throw GameConfigException("trash_radius must be positive");
+        }
+
+        if (this->get_parameter("station_radius").as_double() <= 0.0) {
+            throw GameConfigException("station_radius must be positive");
+        }
+    }
+
+    void loadObstaclesFromParameters()
+    {
+        auto circle_x = this->get_parameter("circle_obstacles_x").as_double_array();
+        auto circle_y = this->get_parameter("circle_obstacles_y").as_double_array();
+        auto circle_r = this->get_parameter("circle_obstacles_radius").as_double_array();
+
+        if (circle_x.size() != circle_y.size() || circle_x.size() != circle_r.size()) {
+            throw GameConfigException("Circle obstacle arrays must have same size");
+        }
+
+        for (size_t i = 0; i < circle_x.size(); ++i) {
+            obstacles_.push_back(
+                std::make_unique<CircleObstacleObject>(circle_x[i], circle_y[i], circle_r[i])
+            );
+
+            circle_obstacles_x_.push_back(circle_x[i]);
+            circle_obstacles_y_.push_back(circle_y[i]);
+            circle_obstacles_radius_.push_back(circle_r[i]);
+        }
+
+        auto rect_x = this->get_parameter("rectangle_obstacles_x").as_double_array();
+        auto rect_y = this->get_parameter("rectangle_obstacles_y").as_double_array();
+        auto rect_w = this->get_parameter("rectangle_obstacles_width").as_double_array();
+        auto rect_h = this->get_parameter("rectangle_obstacles_height").as_double_array();
+
+        if (rect_x.size() != rect_y.size() ||
+            rect_x.size() != rect_w.size() ||
+            rect_x.size() != rect_h.size()) {
+            throw GameConfigException("Rectangle obstacle arrays must have same size");
+        }
+
+        for (size_t i = 0; i < rect_x.size(); ++i) {
+            obstacles_.push_back(
+                std::make_unique<RectangleObstacleObject>(rect_x[i], rect_y[i], rect_w[i], rect_h[i])
+            );
+
+            rectangle_obstacles_x_.push_back(rect_x[i]);
+            rectangle_obstacles_y_.push_back(rect_y[i]);
+            rectangle_obstacles_width_.push_back(rect_w[i]);
+            rectangle_obstacles_height_.push_back(rect_h[i]);
+        }
+    }
+
+    void resetGameCallback(
+        const std::shared_ptr<zadanie2_interfaces::srv::ResetGame::Request> request,
+        std::shared_ptr<zadanie2_interfaces::srv::ResetGame::Response> response)
+    {
+        (void)request;
+
+        player1_ = PlayerState{};
+        player2_ = PlayerState{};
+
+        player1_.max_capacity = this->get_parameter("max_capacity").as_int();
+        player2_.max_capacity = this->get_parameter("max_capacity").as_int();
+
+        game_finished_ = false;
+
+        int trash_count = this->get_parameter("trash_count").as_int();
+        generateTrash(trash_count);
+
+        response->success = true;
+        response->message = "Game was reset successfully.";
+
+        RCLCPP_WARN(this->get_logger(), "Game reset service was called.");
+    }
+
     void generateTrash(int count)
     {
         trash_.clear();
@@ -134,31 +377,32 @@ private:
 
             std::string type = types[id % static_cast<int>(types.size())];
 
-            trash_.push_back({
-                id,
-                type,
-                x,
-                y,
-                trash_radius_,
-                false
-            });
+            trash_.push_back(
+                TrashFactory::createTrash(id, type, x, y, trash_radius_)
+            );
 
             id++;
         }
+    }
 
-        if (id < count) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "Could only generate %d/%d trash objects.",
-                id,
-                count
-            );
+    bool isInsideAnyObstacle(double x, double y) const
+    {
+        for (const auto& obstacle : obstacles_) {
+            if (obstacle->contains(x, y)) {
+                return true;
+            }
         }
+
+        return false;
     }
 
     bool isValidSpawnPosition(double x, double y) const
     {
         if (env_->isOccupied(x, y)) {
+            return false;
+        }
+
+        if (isInsideAnyObstacle(x, y)) {
             return false;
         }
 
@@ -178,6 +422,11 @@ private:
         if (env_->isOccupied(x - safety, y)) return false;
         if (env_->isOccupied(x, y + safety)) return false;
         if (env_->isOccupied(x, y - safety)) return false;
+
+        if (isInsideAnyObstacle(x + safety, y)) return false;
+        if (isInsideAnyObstacle(x - safety, y)) return false;
+        if (isInsideAnyObstacle(x, y + safety)) return false;
+        if (isInsideAnyObstacle(x, y - safety)) return false;
 
         return true;
     }
@@ -217,7 +466,7 @@ private:
             checkGameFinished();
         }
 
-        publishMarkers();
+        publishGameState();
     }
 
     void handlePlayer(PlayerState& player, const std::string& player_name)
@@ -288,18 +537,39 @@ private:
         }
     }
 
-    void checkGameFinished()
+    int getRemainingTrashCount() const
     {
-        bool all_collected = true;
+        int remaining = 0;
 
         for (const auto& item : trash_) {
             if (!item.collected) {
-                all_collected = false;
-                break;
+                remaining++;
             }
         }
 
-        if (!all_collected) {
+        return remaining;
+    }
+
+    std::string getGameStatus() const
+    {
+        if (!game_finished_) {
+            return "RUNNING";
+        }
+
+        if (player1_.score > player2_.score) {
+            return "PLAYER 1 WINS!";
+        }
+
+        if (player2_.score > player1_.score) {
+            return "PLAYER 2 WINS!";
+        }
+
+        return "DRAW!";
+    }
+
+    void checkGameFinished()
+    {
+        if (getRemainingTrashCount() > 0) {
             return;
         }
 
@@ -309,158 +579,60 @@ private:
 
         game_finished_ = true;
 
-        std::string winner;
-
-        if (player1_.score > player2_.score) {
-            winner = "PLAYER 1 WINS!";
-        } else if (player2_.score > player1_.score) {
-            winner = "PLAYER 2 WINS!";
-        } else {
-            winner = "DRAW!";
-        }
-
         RCLCPP_WARN(
             this->get_logger(),
             "GAME OVER. %s Final score: P1=%d, P2=%d",
-            winner.c_str(),
+            getGameStatus().c_str(),
             player1_.score,
             player2_.score
         );
     }
 
-    visualization_msgs::msg::Marker createTrashMarker(const Trash& item)
+    void publishGameState()
     {
-        visualization_msgs::msg::Marker marker;
-        marker.header.stamp = this->get_clock()->now();
-        marker.header.frame_id = "map";
+        zadanie2_interfaces::msg::GameState msg;
 
-        marker.ns = "trash";
-        marker.id = item.id;
-        marker.type = visualization_msgs::msg::Marker::SPHERE;
+        msg.player1_score = player1_.score;
+        msg.player2_score = player2_.score;
 
-        marker.action = item.collected
-            ? visualization_msgs::msg::Marker::DELETE
-            : visualization_msgs::msg::Marker::ADD;
+        msg.player1_capacity = player1_.current_capacity;
+        msg.player2_capacity = player2_.current_capacity;
 
-        marker.pose.position.x = item.x;
-        marker.pose.position.y = item.y;
-        marker.pose.position.z = item.radius;
+        msg.player1_paper_count = player1_.paper_count;
+        msg.player1_plastic_count = player1_.plastic_count;
+        msg.player1_glass_count = player1_.glass_count;
 
-        marker.pose.orientation.w = 1.0;
+        msg.player2_paper_count = player2_.paper_count;
+        msg.player2_plastic_count = player2_.plastic_count;
+        msg.player2_glass_count = player2_.glass_count;
 
-        marker.scale.x = item.radius * 2.0;
-        marker.scale.y = item.radius * 2.0;
-        marker.scale.z = item.radius * 2.0;
-
-        if (item.type == "paper") {
-            marker.color.r = 1.0f;
-            marker.color.g = 1.0f;
-            marker.color.b = 0.2f;
-        } else if (item.type == "plastic") {
-            marker.color.r = 1.0f;
-            marker.color.g = 0.7f;
-            marker.color.b = 0.0f;
-        } else {
-            marker.color.r = 0.4f;
-            marker.color.g = 1.0f;
-            marker.color.b = 0.4f;
-        }
-
-        marker.color.a = 1.0f;
-
-        return marker;
-    }
-
-    visualization_msgs::msg::Marker createStationMarker()
-    {
-        visualization_msgs::msg::Marker marker;
-        marker.header.stamp = this->get_clock()->now();
-        marker.header.frame_id = "map";
-
-        marker.ns = "station";
-        marker.id = 0;
-        marker.type = visualization_msgs::msg::Marker::CYLINDER;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-
-        marker.pose.position.x = station_x_;
-        marker.pose.position.y = station_y_;
-        marker.pose.position.z = 0.05;
-
-        marker.pose.orientation.w = 1.0;
-
-        marker.scale.x = station_radius_ * 2.0;
-        marker.scale.y = station_radius_ * 2.0;
-        marker.scale.z = 0.1;
-
-        marker.color.r = 0.0f;
-        marker.color.g = 1.0f;
-        marker.color.b = 0.0f;
-        marker.color.a = 0.8f;
-
-        return marker;
-    }
-
-    visualization_msgs::msg::Marker createScoreTextMarker()
-    {
-        visualization_msgs::msg::Marker marker;
-        marker.header.stamp = this->get_clock()->now();
-        marker.header.frame_id = "map";
-
-        marker.ns = "score";
-        marker.id = 0;
-        marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-
-        marker.pose.position.x = 2.0;
-        marker.pose.position.y = 1.0;
-        marker.pose.position.z = 1.0;
-
-        marker.pose.orientation.w = 1.0;
-
-        marker.scale.z = 0.45;
-
-        marker.color.r = 1.0f;
-        marker.color.g = 1.0f;
-        marker.color.b = 1.0f;
-        marker.color.a = 1.0f;
-
-        std::string status = "RUNNING";
-
-        if (game_finished_) {
-            if (player1_.score > player2_.score) {
-                status = "PLAYER 1 WINS!";
-            } else if (player2_.score > player1_.score) {
-                status = "PLAYER 2 WINS!";
-            } else {
-                status = "DRAW!";
-            }
-        }
-
-        marker.text =
-            "DUEL MODE - " + status +
-            "\nP1 score: " + std::to_string(player1_.score) +
-            " | cap: " + std::to_string(player1_.current_capacity) +
-            "/" + std::to_string(player1_.max_capacity) +
-            "\nP2 score: " + std::to_string(player2_.score) +
-            " | cap: " + std::to_string(player2_.current_capacity) +
-            "/" + std::to_string(player2_.max_capacity);
-
-        return marker;
-    }
-
-    void publishMarkers()
-    {
-        visualization_msgs::msg::MarkerArray array;
-
-        array.markers.push_back(createStationMarker());
+        msg.remaining_trash = getRemainingTrashCount();
+        msg.game_finished = game_finished_;
+        msg.status = getGameStatus();
 
         for (const auto& item : trash_) {
-            array.markers.push_back(createTrashMarker(item));
+            msg.trash_id.push_back(item.id);
+            msg.trash_type.push_back(item.type);
+            msg.trash_x.push_back(item.x);
+            msg.trash_y.push_back(item.y);
+            msg.trash_radius.push_back(item.radius);
+            msg.trash_collected.push_back(item.collected);
         }
 
-        array.markers.push_back(createScoreTextMarker());
+        msg.station_x = station_->getX();
+        msg.station_y = station_->getY();
+        msg.station_radius = station_->getRadius();
 
-        marker_pub_->publish(array);
+        msg.circle_obstacles_x = circle_obstacles_x_;
+        msg.circle_obstacles_y = circle_obstacles_y_;
+        msg.circle_obstacles_radius = circle_obstacles_radius_;
+
+        msg.rectangle_obstacles_x = rectangle_obstacles_x_;
+        msg.rectangle_obstacles_y = rectangle_obstacles_y_;
+        msg.rectangle_obstacles_width = rectangle_obstacles_width_;
+        msg.rectangle_obstacles_height = rectangle_obstacles_height_;
+
+        game_state_pub_->publish(msg);
     }
 
     std::shared_ptr<environment::Environment> env_;
@@ -469,6 +641,18 @@ private:
     PlayerState player2_;
 
     std::vector<Trash> trash_;
+
+    std::unique_ptr<StationObject> station_;
+    std::vector<std::unique_ptr<GameObject>> obstacles_;
+
+    std::vector<double> circle_obstacles_x_;
+    std::vector<double> circle_obstacles_y_;
+    std::vector<double> circle_obstacles_radius_;
+
+    std::vector<double> rectangle_obstacles_x_;
+    std::vector<double> rectangle_obstacles_y_;
+    std::vector<double> rectangle_obstacles_width_;
+    std::vector<double> rectangle_obstacles_height_;
 
     std::mt19937 rng_;
 
@@ -484,7 +668,9 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player1_odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player2_odom_sub_;
 
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<zadanie2_interfaces::msg::GameState>::SharedPtr game_state_pub_;
+    rclcpp::Service<zadanie2_interfaces::srv::ResetGame>::SharedPtr reset_service_;
+
     rclcpp::TimerBase::SharedPtr timer_;
 };
 
