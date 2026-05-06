@@ -3,6 +3,7 @@
 #include <string>
 #include <cmath>
 #include <random>
+#include <stdexcept>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -142,8 +143,15 @@ public:
                y <= y_ + height_ * 0.5;
     }
 
-    double getWidth() const { return width_; }
-    double getHeight() const { return height_; }
+    double getWidth() const
+    {
+        return width_;
+    }
+
+    double getHeight() const
+    {
+        return height_;
+    }
 
 private:
     double width_;
@@ -173,50 +181,31 @@ public:
         : Node("game_node"),
           rng_(std::random_device{}())
     {
-        this->declare_parameter<std::string>(
-            "map_path",
-            "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
-        );
-        this->declare_parameter<double>("map_resolution", 0.02);
-
-        this->declare_parameter<int>("max_capacity", 3);
-        this->declare_parameter<int>("trash_count", 12);
-
-        this->declare_parameter<double>("trash_radius", 0.25);
-        this->declare_parameter<double>("collect_distance", 0.7);
-
-        this->declare_parameter<double>("station_x", 21.0);
-        this->declare_parameter<double>("station_y", 7.5);
-        this->declare_parameter<double>("station_radius", 0.8);
-
-        this->declare_parameter<std::vector<double>>("circle_obstacles_x", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("circle_obstacles_y", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("circle_obstacles_radius", std::vector<double>{});
-
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height", std::vector<double>{});
+        declareRequiredParameters();
 
         environment::Config env_config;
-        env_config.map_filename = this->get_parameter("map_path").as_string();
-        env_config.resolution = this->get_parameter("map_resolution").as_double();
+        env_config.map_filename = getRequiredParameter<std::string>("map_path");
+        env_config.resolution = getRequiredParameter<double>("map_resolution");
 
         validateConfig(env_config);
 
         env_ = std::make_shared<environment::Environment>(env_config);
 
-        player1_.max_capacity = this->get_parameter("max_capacity").as_int();
-        player2_.max_capacity = this->get_parameter("max_capacity").as_int();
+        player1_.max_capacity = getRequiredParameter<int>("max_capacity");
+        player2_.max_capacity = getRequiredParameter<int>("max_capacity");
 
-        trash_radius_ = this->get_parameter("trash_radius").as_double();
-        collect_distance_ = this->get_parameter("collect_distance").as_double();
+        trash_radius_ = getRequiredParameter<double>("trash_radius");
+        collect_distance_ = getRequiredParameter<double>("collect_distance");
 
-        station_x_ = this->get_parameter("station_x").as_double();
-        station_y_ = this->get_parameter("station_y").as_double();
-        station_radius_ = this->get_parameter("station_radius").as_double();
+        station_x_ = getRequiredParameter<double>("station_x");
+        station_y_ = getRequiredParameter<double>("station_y");
+        station_radius_ = getRequiredParameter<double>("station_radius");
 
-        station_ = std::make_unique<StationObject>(station_x_, station_y_, station_radius_);
+        station_ = std::make_unique<StationObject>(
+            station_x_,
+            station_y_,
+            station_radius_
+        );
 
         loadObstaclesFromParameters();
 
@@ -247,7 +236,7 @@ public:
             )
         );
 
-        int trash_count = this->get_parameter("trash_count").as_int();
+        int trash_count = getRequiredParameter<int>("trash_count");
         generateTrash(trash_count);
 
         timer_ = this->create_wall_timer(
@@ -263,42 +252,87 @@ public:
     }
 
 private:
+    void declareRequiredParameters()
+    {
+        this->declare_parameter<std::string>("map_path");
+        this->declare_parameter<double>("map_resolution");
+
+        this->declare_parameter<int>("max_capacity");
+        this->declare_parameter<int>("trash_count");
+
+        this->declare_parameter<double>("trash_radius");
+        this->declare_parameter<double>("collect_distance");
+
+        this->declare_parameter<double>("station_x");
+        this->declare_parameter<double>("station_y");
+        this->declare_parameter<double>("station_radius");
+
+        this->declare_parameter<std::vector<double>>("circle_obstacles_x");
+        this->declare_parameter<std::vector<double>>("circle_obstacles_y");
+        this->declare_parameter<std::vector<double>>("circle_obstacles_radius");
+
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height");
+    }
+
+    template<typename T>
+    T getRequiredParameter(const std::string& name)
+    {
+        T value;
+
+        if (!this->get_parameter(name, value)) {
+            throw GameConfigException("Missing required ROS parameter: " + name);
+        }
+
+        return value;
+    }
+
     void validateConfig(const environment::Config& env_config)
     {
         if (env_config.resolution <= 0.0) {
             throw GameConfigException("map_resolution must be positive");
         }
 
-        if (this->get_parameter("max_capacity").as_int() <= 0) {
+        if (getRequiredParameter<int>("max_capacity") <= 0) {
             throw GameConfigException("max_capacity must be positive");
         }
 
-        if (this->get_parameter("trash_count").as_int() <= 0) {
+        if (getRequiredParameter<int>("trash_count") <= 0) {
             throw GameConfigException("trash_count must be positive");
         }
 
-        if (this->get_parameter("trash_radius").as_double() <= 0.0) {
+        if (getRequiredParameter<double>("trash_radius") <= 0.0) {
             throw GameConfigException("trash_radius must be positive");
         }
 
-        if (this->get_parameter("station_radius").as_double() <= 0.0) {
+        if (getRequiredParameter<double>("station_radius") <= 0.0) {
             throw GameConfigException("station_radius must be positive");
         }
     }
 
     void loadObstaclesFromParameters()
     {
-        auto circle_x = this->get_parameter("circle_obstacles_x").as_double_array();
-        auto circle_y = this->get_parameter("circle_obstacles_y").as_double_array();
-        auto circle_r = this->get_parameter("circle_obstacles_radius").as_double_array();
+        auto circle_x = getRequiredParameter<std::vector<double>>("circle_obstacles_x");
+        auto circle_y = getRequiredParameter<std::vector<double>>("circle_obstacles_y");
+        auto circle_r = getRequiredParameter<std::vector<double>>("circle_obstacles_radius");
 
         if (circle_x.size() != circle_y.size() || circle_x.size() != circle_r.size()) {
             throw GameConfigException("Circle obstacle arrays must have same size");
         }
 
         for (size_t i = 0; i < circle_x.size(); ++i) {
+            if (circle_r[i] <= 0.0) {
+                throw GameConfigException("Circle obstacle radius must be positive");
+            }
+
             obstacles_.push_back(
-                std::make_unique<CircleObstacleObject>(circle_x[i], circle_y[i], circle_r[i])
+                std::make_unique<CircleObstacleObject>(
+                    circle_x[i],
+                    circle_y[i],
+                    circle_r[i]
+                )
             );
 
             circle_obstacles_x_.push_back(circle_x[i]);
@@ -306,10 +340,10 @@ private:
             circle_obstacles_radius_.push_back(circle_r[i]);
         }
 
-        auto rect_x = this->get_parameter("rectangle_obstacles_x").as_double_array();
-        auto rect_y = this->get_parameter("rectangle_obstacles_y").as_double_array();
-        auto rect_w = this->get_parameter("rectangle_obstacles_width").as_double_array();
-        auto rect_h = this->get_parameter("rectangle_obstacles_height").as_double_array();
+        auto rect_x = getRequiredParameter<std::vector<double>>("rectangle_obstacles_x");
+        auto rect_y = getRequiredParameter<std::vector<double>>("rectangle_obstacles_y");
+        auto rect_w = getRequiredParameter<std::vector<double>>("rectangle_obstacles_width");
+        auto rect_h = getRequiredParameter<std::vector<double>>("rectangle_obstacles_height");
 
         if (rect_x.size() != rect_y.size() ||
             rect_x.size() != rect_w.size() ||
@@ -318,8 +352,17 @@ private:
         }
 
         for (size_t i = 0; i < rect_x.size(); ++i) {
+            if (rect_w[i] <= 0.0 || rect_h[i] <= 0.0) {
+                throw GameConfigException("Rectangle obstacle dimensions must be positive");
+            }
+
             obstacles_.push_back(
-                std::make_unique<RectangleObstacleObject>(rect_x[i], rect_y[i], rect_w[i], rect_h[i])
+                std::make_unique<RectangleObstacleObject>(
+                    rect_x[i],
+                    rect_y[i],
+                    rect_w[i],
+                    rect_h[i]
+                )
             );
 
             rectangle_obstacles_x_.push_back(rect_x[i]);
@@ -327,6 +370,12 @@ private:
             rectangle_obstacles_width_.push_back(rect_w[i]);
             rectangle_obstacles_height_.push_back(rect_h[i]);
         }
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Loaded %zu geometric obstacles.",
+            obstacles_.size()
+        );
     }
 
     void resetGameCallback(
@@ -338,12 +387,12 @@ private:
         player1_ = PlayerState{};
         player2_ = PlayerState{};
 
-        player1_.max_capacity = this->get_parameter("max_capacity").as_int();
-        player2_.max_capacity = this->get_parameter("max_capacity").as_int();
+        player1_.max_capacity = getRequiredParameter<int>("max_capacity");
+        player2_.max_capacity = getRequiredParameter<int>("max_capacity");
 
         game_finished_ = false;
 
-        int trash_count = this->get_parameter("trash_count").as_int();
+        int trash_count = getRequiredParameter<int>("trash_count");
         generateTrash(trash_count);
 
         response->success = true;
@@ -382,6 +431,15 @@ private:
             );
 
             id++;
+        }
+
+        if (id < count) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Could only generate %d/%d trash objects.",
+                id,
+                count
+            );
         }
     }
 
@@ -658,12 +716,12 @@ private:
 
     bool game_finished_ = false;
 
-    double trash_radius_;
-    double collect_distance_;
+    double trash_radius_ = 0.0;
+    double collect_distance_ = 0.0;
 
-    double station_x_;
-    double station_y_;
-    double station_radius_;
+    double station_x_ = 0.0;
+    double station_y_ = 0.0;
+    double station_radius_ = 0.0;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player1_odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player2_odom_sub_;

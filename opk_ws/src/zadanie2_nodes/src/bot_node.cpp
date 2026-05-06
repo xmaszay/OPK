@@ -2,6 +2,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <stdexcept>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -22,21 +23,21 @@ public:
     BotNode()
         : Node("bot_node")
     {
-        this->declare_parameter<int>("max_capacity", 3);
-        this->declare_parameter<double>("station_x", 21.0);
-        this->declare_parameter<double>("station_y", 7.5);
-        this->declare_parameter<double>("target_distance", 0.8);
-        this->declare_parameter<double>("linear_speed", 1.5);
-        this->declare_parameter<double>("angular_gain", 1.5);
-        this->declare_parameter<double>("angle_tolerance", 0.25);
+        this->declare_parameter<int>("max_capacity");
+        this->declare_parameter<double>("station_x");
+        this->declare_parameter<double>("station_y");
+        this->declare_parameter<double>("target_distance");
+        this->declare_parameter<double>("linear_speed");
+        this->declare_parameter<double>("angular_gain");
+        this->declare_parameter<double>("angle_tolerance");
 
-        max_capacity_ = this->get_parameter("max_capacity").as_int();
-        station_x_ = this->get_parameter("station_x").as_double();
-        station_y_ = this->get_parameter("station_y").as_double();
-        target_distance_ = this->get_parameter("target_distance").as_double();
-        linear_speed_ = this->get_parameter("linear_speed").as_double();
-        angular_gain_ = this->get_parameter("angular_gain").as_double();
-        angle_tolerance_ = this->get_parameter("angle_tolerance").as_double();
+        max_capacity_ = getRequiredParameter<int>("max_capacity");
+        station_x_ = getRequiredParameter<double>("station_x");
+        station_y_ = getRequiredParameter<double>("station_y");
+        target_distance_ = getRequiredParameter<double>("target_distance");
+        linear_speed_ = getRequiredParameter<double>("linear_speed");
+        angular_gain_ = getRequiredParameter<double>("angular_gain");
+        angle_tolerance_ = getRequiredParameter<double>("angle_tolerance");
 
         odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
             "/player2/odom",
@@ -64,6 +65,16 @@ public:
     }
 
 private:
+    template<typename T>
+    T getRequiredParameter(const std::string& name)
+    {
+        T value;
+        if (!this->get_parameter(name, value)) {
+            throw std::runtime_error("Missing required ROS parameter: " + name);
+        }
+        return value;
+    }
+
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
         x_ = msg->pose.pose.position.x;
@@ -235,16 +246,16 @@ private:
     double theta_ = 0.0;
     bool has_odom_ = false;
 
-    int max_capacity_;
+    int max_capacity_ = 0;
     int current_capacity_ = 0;
     int current_target_id_ = -1;
 
-    double station_x_;
-    double station_y_;
-    double target_distance_;
-    double linear_speed_;
-    double angular_gain_;
-    double angle_tolerance_;
+    double station_x_ = 0.0;
+    double station_y_ = 0.0;
+    double target_distance_ = 0.0;
+    double linear_speed_ = 0.0;
+    double angular_gain_ = 0.0;
+    double angle_tolerance_ = 0.0;
 
     std::map<int, Target> targets_;
 

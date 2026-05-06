@@ -1,5 +1,6 @@
 #include <memory>
 #include <string>
+#include <stdexcept>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -12,15 +13,12 @@ public:
     MapNode()
         : Node("map_node")
     {
-        this->declare_parameter<std::string>(
-            "map_path",
-            "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
-        );
-        this->declare_parameter<double>("map_resolution", 0.02);
+        this->declare_parameter<std::string>("map_path");
+        this->declare_parameter<double>("map_resolution");
 
         environment::Config config;
-        config.map_filename = this->get_parameter("map_path").as_string();
-        config.resolution = this->get_parameter("map_resolution").as_double();
+        config.map_filename = getRequiredParameter<std::string>("map_path");
+        config.resolution = getRequiredParameter<double>("map_resolution");
 
         env_ = std::make_shared<environment::Environment>(config);
 
@@ -45,6 +43,16 @@ public:
     }
 
 private:
+    template<typename T>
+    T getRequiredParameter(const std::string& name)
+    {
+        T value;
+        if (!this->get_parameter(name, value)) {
+            throw std::runtime_error("Missing required ROS parameter: " + name);
+        }
+        return value;
+    }
+
     void publishMap()
     {
         const cv::Mat& image = env_->getMap();

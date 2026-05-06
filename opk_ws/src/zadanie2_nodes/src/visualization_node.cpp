@@ -1,9 +1,12 @@
 #include <memory>
 #include <string>
 #include <cmath>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "geometry_msgs/msg/point.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
@@ -15,6 +18,16 @@ struct RobotVisualState
     double y = 0.0;
     double theta = 0.0;
     bool has_odom = false;
+};
+
+struct LidarVisualState
+{
+    std::vector<float> ranges;
+    double angle_min = 0.0;
+    double angle_increment = 0.0;
+    double range_min = 0.0;
+    double range_max = 0.0;
+    bool has_scan = false;
 };
 
 class VisualizationNode : public rclcpp::Node
@@ -33,6 +46,18 @@ public:
             "/player2/odom",
             10,
             std::bind(&VisualizationNode::player2OdomCallback, this, std::placeholders::_1)
+        );
+
+        player1_scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+            "/player1/scan",
+            10,
+            std::bind(&VisualizationNode::player1ScanCallback, this, std::placeholders::_1)
+        );
+
+        player2_scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+            "/player2/scan",
+            10,
+            std::bind(&VisualizationNode::player2ScanCallback, this, std::placeholders::_1)
         );
 
         game_state_sub_ = this->create_subscription<zadanie2_interfaces::msg::GameState>(
@@ -65,6 +90,16 @@ private:
         updateRobotState(player2_, msg);
     }
 
+    void player1ScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+    {
+        updateLidarState(player1_lidar_, msg);
+    }
+
+    void player2ScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+    {
+        updateLidarState(player2_lidar_, msg);
+    }
+
     void updateRobotState(
         RobotVisualState& state,
         const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -73,12 +108,23 @@ private:
         state.y = msg->pose.pose.position.y;
 
         const auto& q = msg->pose.pose.orientation;
-
         double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
         double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
         state.theta = std::atan2(siny_cosp, cosy_cosp);
 
         state.has_odom = true;
+    }
+
+    void updateLidarState(
+        LidarVisualState& state,
+        const sensor_msgs::msg::LaserScan::SharedPtr msg)
+    {
+        state.ranges = msg->ranges;
+        state.angle_min = msg->angle_min;
+        state.angle_increment = msg->angle_increment;
+        state.range_min = msg->range_min;
+        state.range_max = msg->range_max;
+        state.has_scan = true;
     }
 
     void gameStateCallback(const zadanie2_interfaces::msg::GameState::SharedPtr msg)
@@ -108,7 +154,6 @@ private:
         marker.pose.position.x = robot.x;
         marker.pose.position.y = robot.y;
         marker.pose.position.z = 0.10;
-
         marker.pose.orientation.w = 1.0;
 
         marker.scale.x = 0.7;
@@ -119,6 +164,63 @@ private:
         marker.color.g = g;
         marker.color.b = b;
         marker.color.a = a;
+
+        return marker;
+    }
+
+    visualization_msgs::msg::Marker createLidarHitsMarker(
+        const RobotVisualState& robot,
+        const LidarVisualState& lidar,
+        int id,
+        const std::string& ns,
+        float r,
+        float g,
+        float b)
+    {
+        visualization_msgs::msg::Marker marker;
+        marker.header.stamp = this->get_clock()->now();
+        marker.header.frame_id = "map";
+
+        marker.ns = ns;
+        marker.id = id;
+        marker.type = visualization_msgs::msg::Marker::POINTS;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+
+        marker.scale.x = 0.05;
+        marker.scale.y = 0.05;
+
+        marker.color.r = r;
+        marker.color.g = g;
+        marker.color.b = b;
+        marker.color.a = 1.0f;
+
+        if (!robot.has_odom || !lidar.has_scan) {
+            return marker;
+        }
+
+        for (size_t i = 0; i < lidar.ranges.size(); ++i) {
+            double range = static_cast<double>(lidar.ranges[i]);
+
+            if (!std::isfinite(range)) {
+                continue;
+            }
+
+            if (range < lidar.range_min || range > lidar.range_max) {
+                continue;
+            }
+
+            double local_angle =
+                lidar.angle_min + static_cast<double>(i) * lidar.angle_increment;
+            double world_angle = robot.theta + local_angle;
+
+            geometry_msgs::msg::Point p;
+            p.x = robot.x + range * std::cos(world_angle);
+            p.y = robot.y + range * std::sin(world_angle);
+            p.z = 0.03;
+
+            marker.points.push_back(p);
+        }
 
         return marker;
     }
@@ -140,7 +242,6 @@ private:
         marker.pose.position.x = last_game_state_.trash_x[i];
         marker.pose.position.y = last_game_state_.trash_y[i];
         marker.pose.position.z = last_game_state_.trash_radius[i];
-
         marker.pose.orientation.w = 1.0;
 
         marker.scale.x = last_game_state_.trash_radius[i] * 2.0;
@@ -164,7 +265,6 @@ private:
         }
 
         marker.color.a = 1.0f;
-
         return marker;
     }
 
@@ -302,6 +402,26 @@ private:
             );
         }
 
+        if (player1_.has_odom && player1_lidar_.has_scan) {
+            array.markers.push_back(
+                createLidarHitsMarker(
+                    player1_, player1_lidar_, 0,
+                    "player1_lidar_hits",
+                    1.0f, 0.0f, 0.0f
+                )
+            );
+        }
+
+        if (player2_.has_odom && player2_lidar_.has_scan) {
+            array.markers.push_back(
+                createLidarHitsMarker(
+                    player2_, player2_lidar_, 0,
+                    "player2_lidar_hits",
+                    0.0f, 1.0f, 1.0f
+                )
+            );
+        }
+
         if (has_game_state_) {
             array.markers.push_back(createStationMarker());
 
@@ -343,11 +463,18 @@ private:
     RobotVisualState player1_;
     RobotVisualState player2_;
 
+    LidarVisualState player1_lidar_;
+    LidarVisualState player2_lidar_;
+
     zadanie2_interfaces::msg::GameState last_game_state_;
     bool has_game_state_ = false;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player1_odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player2_odom_sub_;
+
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr player1_scan_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr player2_scan_sub_;
+
     rclcpp::Subscription<zadanie2_interfaces::msg::GameState>::SharedPtr game_state_sub_;
 
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;

@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <vector>
+#include <stdexcept>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -23,40 +24,14 @@ public:
     RobotNode()
         : Node("robot_node")
     {
-        this->declare_parameter<std::string>(
-            "map_path",
-            "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"
-        );
-        this->declare_parameter<double>("map_resolution", 0.02);
+        declareRequiredParameters();
 
-        this->declare_parameter<double>("initial_x", 20.0);
-        this->declare_parameter<double>("initial_y", 8.0);
-        this->declare_parameter<double>("initial_theta", 0.0);
-
-        this->declare_parameter<bool>("ghost_mode", false);
-
-        this->declare_parameter<std::vector<double>>("circle_obstacles_x", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("circle_obstacles_y", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("circle_obstacles_radius", std::vector<double>{});
-
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width", std::vector<double>{});
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height", std::vector<double>{});
-
-        this->declare_parameter<double>("linear_acceleration", 3.0);
-        this->declare_parameter<double>("angular_acceleration", 2.0);
-        this->declare_parameter<double>("linear_emergency_deceleration", 2.0);
-        this->declare_parameter<double>("angular_emergency_deceleration", 2.0);
-        this->declare_parameter<double>("command_duration", 0.5);
-        this->declare_parameter<int>("simulation_period_ms", 20);
-        this->declare_parameter<int>("publish_period_ms", 50);
-
-        ghost_mode_ = this->get_parameter("ghost_mode").as_bool();
+        ghost_mode_ = getRequiredParameter<bool>("ghost_mode");
+        robot_radius_ = getRequiredParameter<double>("robot_radius");
 
         environment::Config env_config;
-        env_config.map_filename = this->get_parameter("map_path").as_string();
-        env_config.resolution = this->get_parameter("map_resolution").as_double();
+        env_config.map_filename = getRequiredParameter<std::string>("map_path");
+        env_config.resolution = getRequiredParameter<double>("map_resolution");
 
         env_ = std::make_shared<environment::Environment>(env_config);
 
@@ -76,27 +51,27 @@ public:
 
         robot::Config robot_config;
         robot_config.accelerations.linear =
-            this->get_parameter("linear_acceleration").as_double();
+            getRequiredParameter<double>("linear_acceleration");
         robot_config.accelerations.angular =
-            this->get_parameter("angular_acceleration").as_double();
+            getRequiredParameter<double>("angular_acceleration");
 
         robot_config.emergency_decelerations.linear =
-            this->get_parameter("linear_emergency_deceleration").as_double();
+            getRequiredParameter<double>("linear_emergency_deceleration");
         robot_config.emergency_decelerations.angular =
-            this->get_parameter("angular_emergency_deceleration").as_double();
+            getRequiredParameter<double>("angular_emergency_deceleration");
 
         robot_config.command_duration =
-            this->get_parameter("command_duration").as_double();
+            getRequiredParameter<double>("command_duration");
 
         robot_config.simulation_period_ms =
-            this->get_parameter("simulation_period_ms").as_int();
+            getRequiredParameter<int>("simulation_period_ms");
 
         robot_ = std::make_unique<robot::Robot>(robot_config, collision_cb, true);
 
         geometry::RobotState initial_state;
-        initial_state.x = this->get_parameter("initial_x").as_double();
-        initial_state.y = this->get_parameter("initial_y").as_double();
-        initial_state.theta = this->get_parameter("initial_theta").as_double();
+        initial_state.x = getRequiredParameter<double>("initial_x");
+        initial_state.y = getRequiredParameter<double>("initial_y");
+        initial_state.theta = getRequiredParameter<double>("initial_theta");
         initial_state.velocity = {0.0, 0.0};
 
         if (!ghost_mode_ && isOccupiedByMapOrObstacle(initial_state.x, initial_state.y)) {
@@ -144,7 +119,7 @@ public:
             10
         );
 
-        int publish_period_ms = this->get_parameter("publish_period_ms").as_int();
+        int publish_period_ms = getRequiredParameter<int>("publish_period_ms");
 
         timer_ = this->create_wall_timer(
             std::chrono::milliseconds(publish_period_ms),
@@ -153,10 +128,11 @@ public:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "robot_node started. Namespace: %s, base_frame: %s, ghost_mode: %s",
+            "robot_node started. Namespace: %s, base_frame: %s, ghost_mode: %s, robot_radius: %.2f",
             this->get_namespace(),
             base_frame_id_.c_str(),
-            ghost_mode_ ? "true" : "false"
+            ghost_mode_ ? "true" : "false",
+            robot_radius_
         );
     }
 
@@ -176,37 +152,92 @@ private:
         double height;
     };
 
-    void loadObstaclesFromParameters()
+    void declareRequiredParameters()
     {
-        auto circle_x = this->get_parameter("circle_obstacles_x").as_double_array();
-        auto circle_y = this->get_parameter("circle_obstacles_y").as_double_array();
-        auto circle_r = this->get_parameter("circle_obstacles_radius").as_double_array();
+        this->declare_parameter<std::string>("map_path");
+        this->declare_parameter<double>("map_resolution");
 
-        if (circle_x.size() == circle_y.size() && circle_x.size() == circle_r.size()) {
-            for (size_t i = 0; i < circle_x.size(); ++i) {
-                if (circle_r[i] > 0.0) {
-                    circle_obstacles_.push_back({circle_x[i], circle_y[i], circle_r[i]});
-                }
-            }
-        } else {
-            RCLCPP_WARN(this->get_logger(), "Circle obstacle parameter arrays have different sizes.");
+        this->declare_parameter<double>("initial_x");
+        this->declare_parameter<double>("initial_y");
+        this->declare_parameter<double>("initial_theta");
+
+        this->declare_parameter<bool>("ghost_mode");
+        this->declare_parameter<double>("robot_radius");
+
+        this->declare_parameter<double>("linear_acceleration");
+        this->declare_parameter<double>("angular_acceleration");
+        this->declare_parameter<double>("linear_emergency_deceleration");
+        this->declare_parameter<double>("angular_emergency_deceleration");
+        this->declare_parameter<double>("command_duration");
+        this->declare_parameter<int>("simulation_period_ms");
+        this->declare_parameter<int>("publish_period_ms");
+
+        this->declare_parameter<std::vector<double>>("circle_obstacles_x");
+        this->declare_parameter<std::vector<double>>("circle_obstacles_y");
+        this->declare_parameter<std::vector<double>>("circle_obstacles_radius");
+
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width");
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height");
+    }
+
+    template<typename T>
+    T getRequiredParameter(const std::string& name)
+    {
+        T value;
+
+        if (!this->get_parameter(name, value)) {
+            throw std::runtime_error("Missing required ROS parameter: " + name);
         }
 
-        auto rect_x = this->get_parameter("rectangle_obstacles_x").as_double_array();
-        auto rect_y = this->get_parameter("rectangle_obstacles_y").as_double_array();
-        auto rect_w = this->get_parameter("rectangle_obstacles_width").as_double_array();
-        auto rect_h = this->get_parameter("rectangle_obstacles_height").as_double_array();
+        return value;
+    }
 
-        if (rect_x.size() == rect_y.size() &&
-            rect_x.size() == rect_w.size() &&
-            rect_x.size() == rect_h.size()) {
-            for (size_t i = 0; i < rect_x.size(); ++i) {
-                if (rect_w[i] > 0.0 && rect_h[i] > 0.0) {
-                    rectangle_obstacles_.push_back({rect_x[i], rect_y[i], rect_w[i], rect_h[i]});
-                }
+    void loadObstaclesFromParameters()
+    {
+        auto circle_x = getRequiredParameter<std::vector<double>>("circle_obstacles_x");
+        auto circle_y = getRequiredParameter<std::vector<double>>("circle_obstacles_y");
+        auto circle_r = getRequiredParameter<std::vector<double>>("circle_obstacles_radius");
+
+        if (circle_x.size() != circle_y.size() || circle_x.size() != circle_r.size()) {
+            throw std::runtime_error("Circle obstacle parameter arrays have different sizes.");
+        }
+
+        for (size_t i = 0; i < circle_x.size(); ++i) {
+            if (circle_r[i] <= 0.0) {
+                throw std::runtime_error("Circle obstacle radius must be positive.");
             }
-        } else {
-            RCLCPP_WARN(this->get_logger(), "Rectangle obstacle parameter arrays have different sizes.");
+
+            circle_obstacles_.push_back({
+                circle_x[i],
+                circle_y[i],
+                circle_r[i]
+            });
+        }
+
+        auto rect_x = getRequiredParameter<std::vector<double>>("rectangle_obstacles_x");
+        auto rect_y = getRequiredParameter<std::vector<double>>("rectangle_obstacles_y");
+        auto rect_w = getRequiredParameter<std::vector<double>>("rectangle_obstacles_width");
+        auto rect_h = getRequiredParameter<std::vector<double>>("rectangle_obstacles_height");
+
+        if (rect_x.size() != rect_y.size() ||
+            rect_x.size() != rect_w.size() ||
+            rect_x.size() != rect_h.size()) {
+            throw std::runtime_error("Rectangle obstacle parameter arrays have different sizes.");
+        }
+
+        for (size_t i = 0; i < rect_x.size(); ++i) {
+            if (rect_w[i] <= 0.0 || rect_h[i] <= 0.0) {
+                throw std::runtime_error("Rectangle obstacle dimensions must be positive.");
+            }
+
+            rectangle_obstacles_.push_back({
+                rect_x[i],
+                rect_y[i],
+                rect_w[i],
+                rect_h[i]
+            });
         }
 
         RCLCPP_INFO(
@@ -223,7 +254,7 @@ private:
             double dx = x - obstacle.x;
             double dy = y - obstacle.y;
 
-            if (std::sqrt(dx * dx + dy * dy) <= obstacle.radius) {
+            if (std::sqrt(dx * dx + dy * dy) <= obstacle.radius + robot_radius_) {
                 return true;
             }
         }
@@ -235,10 +266,10 @@ private:
     {
         for (const auto& obstacle : rectangle_obstacles_) {
             bool inside =
-                x >= obstacle.x - obstacle.width * 0.5 &&
-                x <= obstacle.x + obstacle.width * 0.5 &&
-                y >= obstacle.y - obstacle.height * 0.5 &&
-                y <= obstacle.y + obstacle.height * 0.5;
+                x >= obstacle.x - obstacle.width * 0.5 - robot_radius_ &&
+                x <= obstacle.x + obstacle.width * 0.5 + robot_radius_ &&
+                y >= obstacle.y - obstacle.height * 0.5 - robot_radius_ &&
+                y <= obstacle.y + obstacle.height * 0.5 + robot_radius_;
 
             if (inside) {
                 return true;
@@ -352,6 +383,7 @@ private:
     std::unique_ptr<robot::Robot> robot_;
 
     bool ghost_mode_ = false;
+    double robot_radius_ = 0.0;
 
     std::vector<CircleObstacle> circle_obstacles_;
     std::vector<RectangleObstacle> rectangle_obstacles_;

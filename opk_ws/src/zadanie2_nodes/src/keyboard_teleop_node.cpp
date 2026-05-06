@@ -3,6 +3,8 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdexcept>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -15,11 +17,11 @@ public:
     KeyboardTeleopNode()
         : Node("keyboard_teleop_node")
     {
-        this->declare_parameter<double>("linear_speed", 3.0);
-        this->declare_parameter<double>("angular_speed", 1.5);
+        this->declare_parameter<double>("linear_speed");
+        this->declare_parameter<double>("angular_speed");
 
-        linear_speed_ = this->get_parameter("linear_speed").as_double();
-        angular_speed_ = this->get_parameter("angular_speed").as_double();
+        linear_speed_ = getRequiredParameter<double>("linear_speed");
+        angular_speed_ = getRequiredParameter<double>("angular_speed");
 
         cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
             "cmd_vel",
@@ -49,6 +51,16 @@ public:
     }
 
 private:
+    template<typename T>
+    T getRequiredParameter(const std::string& name)
+    {
+        T value;
+        if (!this->get_parameter(name, value)) {
+            throw std::runtime_error("Missing required ROS parameter: " + name);
+        }
+        return value;
+    }
+
     void setupTerminal()
     {
         tcgetattr(STDIN_FILENO, &old_terminal_);
@@ -118,8 +130,8 @@ private:
         cmd_pub_->publish(cmd);
     }
 
-    double linear_speed_;
-    double angular_speed_;
+    double linear_speed_ = 0.0;
+    double angular_speed_ = 0.0;
 
     termios old_terminal_;
 

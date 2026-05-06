@@ -154,6 +154,7 @@ add_executable(visualization_node
 ament_target_dependencies(visualization_node
   rclcpp
   nav_msgs
+  sensor_msgs
   visualization_msgs
   zadanie2_interfaces
 )
