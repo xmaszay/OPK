@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>zadanie1</name>
+  <version>0.0.1</version>
+  <description>Core robot simulation classes from assignment 1.</description>
+
+  <maintainer email="xmaszay@stuba.sk">Peter</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>libopencv-dev</build_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

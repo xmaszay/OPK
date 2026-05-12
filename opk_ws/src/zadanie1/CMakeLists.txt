@@ -6,6 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(OpenCV REQUIRED)
 
 add_library(robot_lib
   src/Robot.cpp
@@ -15,27 +16,44 @@ add_library(robot_lib
 )
 
 target_include_directories(robot_lib PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${OpenCV_INCLUDE_DIRS}
 )
 
-target_compile_features(robot_lib PUBLIC c_std_99 cxx_std_17)
+target_link_libraries(robot_lib
+  ${OpenCV_LIBS}
+)
+
+add_executable(zadanie1_main
+  src/main.cpp
+)
+
+target_include_directories(zadanie1_main PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(zadanie1_main
+  robot_lib
+  ${OpenCV_LIBS}
+)
+
+install(TARGETS
+  robot_lib
+  zadanie1_main
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(
-  TARGETS robot_lib
-  EXPORT export_zadanie1
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
+  DIRECTORY include resources
+  DESTINATION share/${PROJECT_NAME}
 )
 
-install(
-  DIRECTORY include/
-  DESTINATION include
-)
-
-ament_export_include_directories(include)
-ament_export_targets(export_zadanie1 HAS_LIBRARY_TARGET)
-ament_export_libraries(robot_lib)
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  set(ament_cmake_copyright_FOUND TRUE)
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
 
 ament_package()
