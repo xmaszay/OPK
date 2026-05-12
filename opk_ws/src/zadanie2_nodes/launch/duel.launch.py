@@ -76,6 +76,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    web_node = Node(
+        package='zadanie2_nodes',
+        executable='web_node',
+        name='web_node',
+        output='screen',
+        parameters=[config_file]
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -93,5 +101,6 @@ def generate_launch_description():
         game_node,
         bot_node,
         visualization_node,
+        web_node,
         rviz
     ])

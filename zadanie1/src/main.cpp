@@ -18,7 +18,7 @@ int main() {
         auto env = std::make_shared<environment::Environment>(envConfig); // defin env
         auto canvas = std::make_unique<visualization::Canvas>(env->getMap()); // dostane mapu z env
         auto collisionCb = [env](geometry::RobotState state) {
-            return env->isOccupied(state.x, state.y);
+            return env->isOccupied(state.x, state.y); // ziskame z env ci je pozicia obsadena 
             };
 
         lidar::Config lidarConfig;

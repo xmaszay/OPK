@@ -1,9 +1,14 @@
+/*
+- načíta parametre z YAML
+- odoberá /player1/odom a /player2/odom
+- posiela polohu robotov do GameLogic
+- publikuje /game_state
+- poskytuje /reset_game service
+*/
 #include <memory>
-#include <vector>
-#include <string>
-#include <cmath>
-#include <random>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -11,223 +16,72 @@
 #include "zadanie2_interfaces/msg/game_state.hpp"
 #include "zadanie2_interfaces/srv/reset_game.hpp"
 
-#include "environment/Environment.h"
-
-class GameConfigException : public std::runtime_error
-{
-public:
-    explicit GameConfigException(const std::string& message)
-        : std::runtime_error(message)
-    {
-    }
-};
-
-struct Trash
-{
-    int id;
-    std::string type;
-    double x;
-    double y;
-    double radius;
-    bool collected;
-};
-
-class TrashFactory
-{
-public:
-    static Trash createTrash(
-        int id,
-        const std::string& type,
-        double x,
-        double y,
-        double radius)
-    {
-        if (type != "paper" && type != "plastic" && type != "glass") {
-            throw GameConfigException("Unknown trash type: " + type);
-        }
-
-        return Trash{
-            id,
-            type,
-            x,
-            y,
-            radius,
-            false
-        };
-    }
-};
-
-class GameObject
-{
-public:
-    GameObject(double x, double y, double radius)
-        : x_(x), y_(y), radius_(radius)
-    {
-    }
-
-    virtual ~GameObject() = default;
-
-    double getX() const { return x_; }
-    double getY() const { return y_; }
-    double getRadius() const { return radius_; }
-
-    virtual std::string getObjectType() const = 0;
-    virtual bool contains(double x, double y) const = 0;
-
-protected:
-    double x_;
-    double y_;
-    double radius_;
-};
-
-class StationObject : public GameObject
-{
-public:
-    StationObject(double x, double y, double radius)
-        : GameObject(x, y, radius)
-    {
-    }
-
-    std::string getObjectType() const override
-    {
-        return "station";
-    }
-
-    bool contains(double x, double y) const override
-    {
-        double dx = x - x_;
-        double dy = y - y_;
-        return std::sqrt(dx * dx + dy * dy) <= radius_;
-    }
-};
-
-class CircleObstacleObject : public GameObject
-{
-public:
-    CircleObstacleObject(double x, double y, double radius)
-        : GameObject(x, y, radius)
-    {
-    }
-
-    std::string getObjectType() const override
-    {
-        return "circle_obstacle";
-    }
-
-    bool contains(double x, double y) const override
-    {
-        double dx = x - x_;
-        double dy = y - y_;
-        return std::sqrt(dx * dx + dy * dy) <= radius_;
-    }
-};
-
-class RectangleObstacleObject : public GameObject
-{
-public:
-    RectangleObstacleObject(double x, double y, double width, double height)
-        : GameObject(x, y, 0.0), width_(width), height_(height)
-    {
-    }
-
-    std::string getObjectType() const override
-    {
-        return "rectangle_obstacle";
-    }
-
-    bool contains(double x, double y) const override
-    {
-        return x >= x_ - width_ * 0.5 &&
-               x <= x_ + width_ * 0.5 &&
-               y >= y_ - height_ * 0.5 &&
-               y <= y_ + height_ * 0.5;
-    }
-
-    double getWidth() const
-    {
-        return width_;
-    }
-
-    double getHeight() const
-    {
-        return height_;
-    }
-
-private:
-    double width_;
-    double height_;
-};
-
-struct PlayerState
-{
-    double x = 0.0;
-    double y = 0.0;
-    bool has_odom = false;
-
-    int current_capacity = 0;
-    int max_capacity = 3;
-
-    int paper_count = 0;
-    int plastic_count = 0;
-    int glass_count = 0;
-
-    int score = 0;
-};
+#include "game/GameLogic.h"
 
 class GameNode : public rclcpp::Node
 {
 public:
     GameNode()
-        : Node("game_node"),
-          rng_(std::random_device{}())
+        : Node("game_node") // vytvorenie ROS node s nazvom game_node
     {
-        declareRequiredParameters();
+        declareRequiredParameters(); // deklarujeme vsetky parametre, ktore ocakavame z yaml
 
-        environment::Config env_config;
-        env_config.map_filename = getRequiredParameter<std::string>("map_path");
-        env_config.resolution = getRequiredParameter<double>("map_resolution");
+        game::GameConfig config; // konfiguracna struktura pre cistu hernu logiku GameLogic
 
-        validateConfig(env_config);
+        config.map_path = getRequiredParameter<std::string>("map_path"); // cesta k png mape z yaml
+        config.map_resolution = getRequiredParameter<double>("map_resolution"); // rozlisenie mapy
 
-        env_ = std::make_shared<environment::Environment>(env_config);
+        config.max_capacity = getRequiredParameter<int>("max_capacity"); // maximalna kapacita robota
+        config.trash_count = getRequiredParameter<int>("trash_count"); // pocet generovanych odpadkov
 
-        player1_.max_capacity = getRequiredParameter<int>("max_capacity");
-        player2_.max_capacity = getRequiredParameter<int>("max_capacity");
+        config.trash_radius_min = getRequiredParameter<double>("trash_radius_min"); // minimalny polomer odpadu
+        config.trash_radius_max = getRequiredParameter<double>("trash_radius_max"); // maximalny polomer odpadu
+        config.trash_types = getRequiredParameter<std::vector<std::string>>("trash_types"); // typy odpadu z yaml, napr paper/plastic/glass
 
-        trash_radius_ = getRequiredParameter<double>("trash_radius");
-        collect_distance_ = getRequiredParameter<double>("collect_distance");
+        config.collect_distance = getRequiredParameter<double>("collect_distance"); // vzdialenost na pozbieranie odpadu
+        config.path_min_step = getRequiredParameter<double>("path_min_step"); // minimalny krok, po ktorom sa ulozi dalsi bod prejdenej drahy
 
-        station_x_ = getRequiredParameter<double>("station_x");
-        station_y_ = getRequiredParameter<double>("station_y");
-        station_radius_ = getRequiredParameter<double>("station_radius");
+        config.station_x = getRequiredParameter<double>("station_x"); // poloha stanice x
+        config.station_y = getRequiredParameter<double>("station_y"); // poloha stanice y
+        config.station_radius = getRequiredParameter<double>("station_radius"); // polomer stanice
 
-        station_ = std::make_unique<StationObject>(
-            station_x_,
-            station_y_,
-            station_radius_
-        );
+        config.circle_obstacles_x =
+            getRequiredParameter<std::vector<double>>("circle_obstacles_x"); // x suradnice kruhovych prekazok
+        config.circle_obstacles_y =
+            getRequiredParameter<std::vector<double>>("circle_obstacles_y"); // y suradnice kruhovych prekazok
+        config.circle_obstacles_radius =
+            getRequiredParameter<std::vector<double>>("circle_obstacles_radius"); // polomery kruhovych prekazok
 
-        loadObstaclesFromParameters();
+        config.rectangle_obstacles_x =
+            getRequiredParameter<std::vector<double>>("rectangle_obstacles_x"); // x suradnice obdlznikovych prekazok
+        config.rectangle_obstacles_y =
+            getRequiredParameter<std::vector<double>>("rectangle_obstacles_y"); // y suradnice obdlznikovych prekazok
+        config.rectangle_obstacles_width =
+            getRequiredParameter<std::vector<double>>("rectangle_obstacles_width"); // sirky obdlznikovych prekazok
+        config.rectangle_obstacles_height =
+            getRequiredParameter<std::vector<double>>("rectangle_obstacles_height"); // vysky obdlznikovych prekazok
+
+        game_logic_ = std::make_unique<game::GameLogic>(config); // vytvorenie hernej logiky mimo ROS, GameNode je len wrapper
 
         player1_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            "/player1/odom",
+            "/player1/odom", // odobera polohu prveho robota
             10,
             std::bind(&GameNode::player1OdomCallback, this, std::placeholders::_1)
         );
 
         player2_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            "/player2/odom",
+            "/player2/odom", // odobera polohu druheho robota/bota
             10,
             std::bind(&GameNode::player2OdomCallback, this, std::placeholders::_1)
         );
 
         game_state_pub_ = this->create_publisher<zadanie2_interfaces::msg::GameState>(
-            "game_state",
+            "game_state", // publikuje stav hry na /game_state
             10
         );
 
         reset_service_ = this->create_service<zadanie2_interfaces::srv::ResetGame>(
-            "reset_game",
+            "reset_game", // service na reset hry
             std::bind(
                 &GameNode::resetGameCallback,
                 this,
@@ -236,145 +90,70 @@ public:
             )
         );
 
-        int trash_count = getRequiredParameter<int>("trash_count");
-        generateTrash(trash_count);
-
         timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100),
-            std::bind(&GameNode::updateGame, this)
+            std::chrono::milliseconds(100), // kazdych 100ms sa aktualizuje hra a publikuje stav hry
+            std::bind(&GameNode::timerCallback, this)
         );
 
-        RCLCPP_INFO(
-            this->get_logger(),
-            "game_node started. Generated %zu trash objects.",
-            trash_.size()
-        );
+        RCLCPP_INFO(this->get_logger(), "game_node started as ROS wrapper around GameLogic.");
     }
 
 private:
-    void declareRequiredParameters()
+    void declareRequiredParameters() // deklaracia vsetkych parametrov, ktore musia prist z yaml
     {
-        this->declare_parameter<std::string>("map_path");
-        this->declare_parameter<double>("map_resolution");
+        this->declare_parameter<std::string>("map_path"); // cesta k mape
+        this->declare_parameter<double>("map_resolution"); // rozlisenie mapy
 
-        this->declare_parameter<int>("max_capacity");
-        this->declare_parameter<int>("trash_count");
+        this->declare_parameter<int>("max_capacity"); // maximalna kapacita robota
+        this->declare_parameter<int>("trash_count"); // pocet odpadkov
 
-        this->declare_parameter<double>("trash_radius");
-        this->declare_parameter<double>("collect_distance");
+        this->declare_parameter<double>("trash_radius_min"); // min polomer odpadu
+        this->declare_parameter<double>("trash_radius_max"); // max polomer odpadu
+        this->declare_parameter<std::vector<std::string>>("trash_types"); // druhy odpadu
 
-        this->declare_parameter<double>("station_x");
-        this->declare_parameter<double>("station_y");
-        this->declare_parameter<double>("station_radius");
+        this->declare_parameter<double>("collect_distance"); // vzdialenost pre pozbieranie odpadu
+        this->declare_parameter<double>("path_min_step"); // ako casto sa uklada bod drahy
 
-        this->declare_parameter<std::vector<double>>("circle_obstacles_x");
-        this->declare_parameter<std::vector<double>>("circle_obstacles_y");
-        this->declare_parameter<std::vector<double>>("circle_obstacles_radius");
+        this->declare_parameter<double>("station_x"); // poloha stanice x
+        this->declare_parameter<double>("station_y"); // poloha stanice y
+        this->declare_parameter<double>("station_radius"); // polomer stanice
 
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x");
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y");
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width");
-        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height");
+        this->declare_parameter<std::vector<double>>("circle_obstacles_x"); // kruhove prekazky - x
+        this->declare_parameter<std::vector<double>>("circle_obstacles_y"); // kruhove prekazky - y
+        this->declare_parameter<std::vector<double>>("circle_obstacles_radius"); // kruhove prekazky - polomer
+
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_x"); // obdlznikove prekazky - x
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_y"); // obdlznikove prekazky - y
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_width"); // obdlznikove prekazky - sirka
+        this->declare_parameter<std::vector<double>>("rectangle_obstacles_height"); // obdlznikove prekazky - vyska
     }
 
     template<typename T>
-    T getRequiredParameter(const std::string& name)
+    T getRequiredParameter(const std::string& name) // funkcia na povinne citanie parametrov z yaml
     {
-        T value;
+        rclcpp::Parameter parameter;
 
-        if (!this->get_parameter(name, value)) {
-            throw GameConfigException("Missing required ROS parameter: " + name);
+        if (!this->get_parameter(name, parameter) ||
+            parameter.get_type() == rclcpp::ParameterType::PARAMETER_NOT_SET) {
+            throw std::runtime_error("Missing required ROS parameter: " + name); // ak parameter chyba, node skonci s chybou
         }
 
-        return value;
+        return parameter.get_value<T>(); // vrati hodnotu parametra v pozadovanom type
     }
 
-    void validateConfig(const environment::Config& env_config)
+    void player1OdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) // zavola sa vzdy ked pride nova odometria z /player1/odom
     {
-        if (env_config.resolution <= 0.0) {
-            throw GameConfigException("map_resolution must be positive");
-        }
-
-        if (getRequiredParameter<int>("max_capacity") <= 0) {
-            throw GameConfigException("max_capacity must be positive");
-        }
-
-        if (getRequiredParameter<int>("trash_count") <= 0) {
-            throw GameConfigException("trash_count must be positive");
-        }
-
-        if (getRequiredParameter<double>("trash_radius") <= 0.0) {
-            throw GameConfigException("trash_radius must be positive");
-        }
-
-        if (getRequiredParameter<double>("station_radius") <= 0.0) {
-            throw GameConfigException("station_radius must be positive");
-        }
+        game_logic_->updatePlayer1Position(
+            msg->pose.pose.position.x, // posleme aktualne x hraca 1 do GameLogic
+            msg->pose.pose.position.y  // posleme aktualne y hraca 1 do GameLogic
+        );
     }
 
-    void loadObstaclesFromParameters()
+    void player2OdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) // zavola sa vzdy ked pride nova odometria z /player2/odom
     {
-        auto circle_x = getRequiredParameter<std::vector<double>>("circle_obstacles_x");
-        auto circle_y = getRequiredParameter<std::vector<double>>("circle_obstacles_y");
-        auto circle_r = getRequiredParameter<std::vector<double>>("circle_obstacles_radius");
-
-        if (circle_x.size() != circle_y.size() || circle_x.size() != circle_r.size()) {
-            throw GameConfigException("Circle obstacle arrays must have same size");
-        }
-
-        for (size_t i = 0; i < circle_x.size(); ++i) {
-            if (circle_r[i] <= 0.0) {
-                throw GameConfigException("Circle obstacle radius must be positive");
-            }
-
-            obstacles_.push_back(
-                std::make_unique<CircleObstacleObject>(
-                    circle_x[i],
-                    circle_y[i],
-                    circle_r[i]
-                )
-            );
-
-            circle_obstacles_x_.push_back(circle_x[i]);
-            circle_obstacles_y_.push_back(circle_y[i]);
-            circle_obstacles_radius_.push_back(circle_r[i]);
-        }
-
-        auto rect_x = getRequiredParameter<std::vector<double>>("rectangle_obstacles_x");
-        auto rect_y = getRequiredParameter<std::vector<double>>("rectangle_obstacles_y");
-        auto rect_w = getRequiredParameter<std::vector<double>>("rectangle_obstacles_width");
-        auto rect_h = getRequiredParameter<std::vector<double>>("rectangle_obstacles_height");
-
-        if (rect_x.size() != rect_y.size() ||
-            rect_x.size() != rect_w.size() ||
-            rect_x.size() != rect_h.size()) {
-            throw GameConfigException("Rectangle obstacle arrays must have same size");
-        }
-
-        for (size_t i = 0; i < rect_x.size(); ++i) {
-            if (rect_w[i] <= 0.0 || rect_h[i] <= 0.0) {
-                throw GameConfigException("Rectangle obstacle dimensions must be positive");
-            }
-
-            obstacles_.push_back(
-                std::make_unique<RectangleObstacleObject>(
-                    rect_x[i],
-                    rect_y[i],
-                    rect_w[i],
-                    rect_h[i]
-                )
-            );
-
-            rectangle_obstacles_x_.push_back(rect_x[i]);
-            rectangle_obstacles_y_.push_back(rect_y[i]);
-            rectangle_obstacles_width_.push_back(rect_w[i]);
-            rectangle_obstacles_height_.push_back(rect_h[i]);
-        }
-
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Loaded %zu geometric obstacles.",
-            obstacles_.size()
+        game_logic_->updatePlayer2Position(
+            msg->pose.pose.position.x, // posleme aktualne x hraca 2 do GameLogic
+            msg->pose.pose.position.y  // posleme aktualne y hraca 2 do GameLogic
         );
     }
 
@@ -382,360 +161,91 @@ private:
         const std::shared_ptr<zadanie2_interfaces::srv::ResetGame::Request> request,
         std::shared_ptr<zadanie2_interfaces::srv::ResetGame::Response> response)
     {
-        (void)request;
+        (void)request; // request nepouzivame, reset je bez vstupnych dat
 
-        player1_ = PlayerState{};
-        player2_ = PlayerState{};
+        game_logic_->reset(); // resetuje hernu logiku - skore, kapacity, odpadky, drahy
 
-        player1_.max_capacity = getRequiredParameter<int>("max_capacity");
-        player2_.max_capacity = getRequiredParameter<int>("max_capacity");
-
-        game_finished_ = false;
-
-        int trash_count = getRequiredParameter<int>("trash_count");
-        generateTrash(trash_count);
-
-        response->success = true;
+        response->success = true; // odpoved pre service klienta
         response->message = "Game was reset successfully.";
 
         RCLCPP_WARN(this->get_logger(), "Game reset service was called.");
     }
 
-    void generateTrash(int count)
+    void timerCallback() // funkcia volana timerom kazdych 100ms
     {
-        trash_.clear();
-
-        std::uniform_real_distribution<double> x_dist(0.0, env_->getWidth());
-        std::uniform_real_distribution<double> y_dist(0.0, env_->getHeight());
-
-        std::vector<std::string> types = {"paper", "plastic", "glass"};
-
-        int id = 0;
-        int attempts = 0;
-        const int max_attempts = count * 1000;
-
-        while (id < count && attempts < max_attempts) {
-            attempts++;
-
-            double x = x_dist(rng_);
-            double y = y_dist(rng_);
-
-            if (!isValidSpawnPosition(x, y)) {
-                continue;
-            }
-
-            std::string type = types[id % static_cast<int>(types.size())];
-
-            trash_.push_back(
-                TrashFactory::createTrash(id, type, x, y, trash_radius_)
-            );
-
-            id++;
-        }
-
-        if (id < count) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "Could only generate %d/%d trash objects.",
-                id,
-                count
-            );
-        }
+        game_logic_->update(); // aktualizacia hry - zber odpadu, vylozenie, kontrola konca hry
+        publishGameState(); // publikovanie aktualneho stavu hry
     }
 
-    bool isInsideAnyObstacle(double x, double y) const
+    void publishGameState() // prevedie stav z GameLogic do ROS spravy GameState
     {
-        for (const auto& obstacle : obstacles_) {
-            if (obstacle->contains(x, y)) {
-                return true;
-            }
+        game::GameSnapshot snapshot = game_logic_->getSnapshot(); // ziskame aktualny snapshot hry z cistej logiky
+
+        zadanie2_interfaces::msg::GameState msg; // vlastna ROS sprava pre stav hry
+
+        msg.player1_score = snapshot.player1.score; // skore hraca 1
+        msg.player2_score = snapshot.player2.score; // skore hraca 2
+
+        msg.player1_capacity = snapshot.player1.current_capacity; // aktualna kapacita hraca 1
+        msg.player2_capacity = snapshot.player2.current_capacity; // aktualna kapacita hraca 2
+
+        msg.player1_paper_count = snapshot.player1.paper_count; // pocet pozbieranych papierov hracom 1
+        msg.player1_plastic_count = snapshot.player1.plastic_count; // pocet pozbieranych plastov hracom 1
+        msg.player1_glass_count = snapshot.player1.glass_count; // pocet pozbieranych skiel hracom 1
+
+        msg.player2_paper_count = snapshot.player2.paper_count; // pocet pozbieranych papierov hracom 2
+        msg.player2_plastic_count = snapshot.player2.plastic_count; // pocet pozbieranych plastov hracom 2
+        msg.player2_glass_count = snapshot.player2.glass_count; // pocet pozbieranych skiel hracom 2
+
+        msg.remaining_trash = snapshot.remaining_trash; // pocet odpadkov, ktore este ostali na ploche
+        msg.game_finished = snapshot.game_finished; // ci hra skoncila
+        msg.status = snapshot.status; // textovy stav hry, napr RUNNING alebo vitaz
+
+        for (const auto& item : snapshot.trash) { // naplnenie poli pre vsetky odpadky
+            msg.trash_id.push_back(item.id); // id odpadu
+            msg.trash_type.push_back(item.type); // typ odpadu
+            msg.trash_x.push_back(item.x); // poloha odpadu x
+            msg.trash_y.push_back(item.y); // poloha odpadu y
+            msg.trash_radius.push_back(item.radius); // polomer odpadu
+            msg.trash_collected.push_back(item.collected); // ci je odpad pozbierany
         }
 
-        return false;
+        msg.station_x = snapshot.station_x; // poloha stanice x
+        msg.station_y = snapshot.station_y; // poloha stanice y
+        msg.station_radius = snapshot.station_radius; // polomer stanice
+
+        msg.circle_obstacles_x = snapshot.circle_obstacles_x; // x suradnice kruhovych prekazok
+        msg.circle_obstacles_y = snapshot.circle_obstacles_y; // y suradnice kruhovych prekazok
+        msg.circle_obstacles_radius = snapshot.circle_obstacles_radius; // polomery kruhovych prekazok
+
+        msg.rectangle_obstacles_x = snapshot.rectangle_obstacles_x; // x suradnice obdlznikovych prekazok
+        msg.rectangle_obstacles_y = snapshot.rectangle_obstacles_y; // y suradnice obdlznikovych prekazok
+        msg.rectangle_obstacles_width = snapshot.rectangle_obstacles_width; // sirky obdlznikovych prekazok
+        msg.rectangle_obstacles_height = snapshot.rectangle_obstacles_height; // vysky obdlznikovych prekazok
+
+        msg.player1_path_x = snapshot.player1.path_x; // prejdena draha hraca 1 - x body
+        msg.player1_path_y = snapshot.player1.path_y; // prejdena draha hraca 1 - y body
+        msg.player2_path_x = snapshot.player2.path_x; // prejdena draha hraca 2 - x body
+        msg.player2_path_y = snapshot.player2.path_y; // prejdena draha hraca 2 - y body
+
+        game_state_pub_->publish(msg); // publikovanie stavu hry na /game_state
     }
 
-    bool isValidSpawnPosition(double x, double y) const
-    {
-        if (env_->isOccupied(x, y)) {
-            return false;
-        }
+    std::unique_ptr<game::GameLogic> game_logic_; // cista herna logika bez ROS
 
-        if (isInsideAnyObstacle(x, y)) {
-            return false;
-        }
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player1_odom_sub_; // subscriber na odometriu hraca 1
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player2_odom_sub_; // subscriber na odometriu hraca 2
 
-        if (distance(x, y, station_x_, station_y_) < station_radius_ + 1.0) {
-            return false;
-        }
+    rclcpp::Publisher<zadanie2_interfaces::msg::GameState>::SharedPtr game_state_pub_; // publisher stavu hry
+    rclcpp::Service<zadanie2_interfaces::srv::ResetGame>::SharedPtr reset_service_; // service na reset hry
 
-        for (const auto& item : trash_) {
-            if (distance(x, y, item.x, item.y) < 1.0) {
-                return false;
-            }
-        }
-
-        const double safety = 0.35;
-
-        if (env_->isOccupied(x + safety, y)) return false;
-        if (env_->isOccupied(x - safety, y)) return false;
-        if (env_->isOccupied(x, y + safety)) return false;
-        if (env_->isOccupied(x, y - safety)) return false;
-
-        if (isInsideAnyObstacle(x + safety, y)) return false;
-        if (isInsideAnyObstacle(x - safety, y)) return false;
-        if (isInsideAnyObstacle(x, y + safety)) return false;
-        if (isInsideAnyObstacle(x, y - safety)) return false;
-
-        return true;
-    }
-
-    void player1OdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
-    {
-        player1_.x = msg->pose.pose.position.x;
-        player1_.y = msg->pose.pose.position.y;
-        player1_.has_odom = true;
-    }
-
-    void player2OdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
-    {
-        player2_.x = msg->pose.pose.position.x;
-        player2_.y = msg->pose.pose.position.y;
-        player2_.has_odom = true;
-    }
-
-    double distance(double x1, double y1, double x2, double y2) const
-    {
-        double dx = x1 - x2;
-        double dy = y1 - y2;
-        return std::sqrt(dx * dx + dy * dy);
-    }
-
-    void updateGame()
-    {
-        if (!game_finished_) {
-            if (player1_.has_odom) {
-                handlePlayer(player1_, "Player 1");
-            }
-
-            if (player2_.has_odom) {
-                handlePlayer(player2_, "Player 2");
-            }
-
-            checkGameFinished();
-        }
-
-        publishGameState();
-    }
-
-    void handlePlayer(PlayerState& player, const std::string& player_name)
-    {
-        collectTrash(player, player_name);
-        unloadAtStation(player, player_name);
-    }
-
-    void collectTrash(PlayerState& player, const std::string& player_name)
-    {
-        if (player.current_capacity >= player.max_capacity) {
-            return;
-        }
-
-        for (auto& item : trash_) {
-            if (item.collected) {
-                continue;
-            }
-
-            double d = distance(player.x, player.y, item.x, item.y);
-
-            if (d <= collect_distance_ + item.radius) {
-                item.collected = true;
-                player.current_capacity++;
-
-                if (item.type == "paper") {
-                    player.paper_count++;
-                } else if (item.type == "plastic") {
-                    player.plastic_count++;
-                } else if (item.type == "glass") {
-                    player.glass_count++;
-                }
-
-                RCLCPP_INFO(
-                    this->get_logger(),
-                    "%s collected %s. Capacity: %d/%d",
-                    player_name.c_str(),
-                    item.type.c_str(),
-                    player.current_capacity,
-                    player.max_capacity
-                );
-
-                return;
-            }
-        }
-    }
-
-    void unloadAtStation(PlayerState& player, const std::string& player_name)
-    {
-        if (player.current_capacity <= 0) {
-            return;
-        }
-
-        double d = distance(player.x, player.y, station_x_, station_y_);
-
-        if (d <= station_radius_) {
-            player.score += player.current_capacity;
-
-            RCLCPP_INFO(
-                this->get_logger(),
-                "%s unloaded %d trash. Score: %d",
-                player_name.c_str(),
-                player.current_capacity,
-                player.score
-            );
-
-            player.current_capacity = 0;
-        }
-    }
-
-    int getRemainingTrashCount() const
-    {
-        int remaining = 0;
-
-        for (const auto& item : trash_) {
-            if (!item.collected) {
-                remaining++;
-            }
-        }
-
-        return remaining;
-    }
-
-    std::string getGameStatus() const
-    {
-        if (!game_finished_) {
-            return "RUNNING";
-        }
-
-        if (player1_.score > player2_.score) {
-            return "PLAYER 1 WINS!";
-        }
-
-        if (player2_.score > player1_.score) {
-            return "PLAYER 2 WINS!";
-        }
-
-        return "DRAW!";
-    }
-
-    void checkGameFinished()
-    {
-        if (getRemainingTrashCount() > 0) {
-            return;
-        }
-
-        if (player1_.current_capacity > 0 || player2_.current_capacity > 0) {
-            return;
-        }
-
-        game_finished_ = true;
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "GAME OVER. %s Final score: P1=%d, P2=%d",
-            getGameStatus().c_str(),
-            player1_.score,
-            player2_.score
-        );
-    }
-
-    void publishGameState()
-    {
-        zadanie2_interfaces::msg::GameState msg;
-
-        msg.player1_score = player1_.score;
-        msg.player2_score = player2_.score;
-
-        msg.player1_capacity = player1_.current_capacity;
-        msg.player2_capacity = player2_.current_capacity;
-
-        msg.player1_paper_count = player1_.paper_count;
-        msg.player1_plastic_count = player1_.plastic_count;
-        msg.player1_glass_count = player1_.glass_count;
-
-        msg.player2_paper_count = player2_.paper_count;
-        msg.player2_plastic_count = player2_.plastic_count;
-        msg.player2_glass_count = player2_.glass_count;
-
-        msg.remaining_trash = getRemainingTrashCount();
-        msg.game_finished = game_finished_;
-        msg.status = getGameStatus();
-
-        for (const auto& item : trash_) {
-            msg.trash_id.push_back(item.id);
-            msg.trash_type.push_back(item.type);
-            msg.trash_x.push_back(item.x);
-            msg.trash_y.push_back(item.y);
-            msg.trash_radius.push_back(item.radius);
-            msg.trash_collected.push_back(item.collected);
-        }
-
-        msg.station_x = station_->getX();
-        msg.station_y = station_->getY();
-        msg.station_radius = station_->getRadius();
-
-        msg.circle_obstacles_x = circle_obstacles_x_;
-        msg.circle_obstacles_y = circle_obstacles_y_;
-        msg.circle_obstacles_radius = circle_obstacles_radius_;
-
-        msg.rectangle_obstacles_x = rectangle_obstacles_x_;
-        msg.rectangle_obstacles_y = rectangle_obstacles_y_;
-        msg.rectangle_obstacles_width = rectangle_obstacles_width_;
-        msg.rectangle_obstacles_height = rectangle_obstacles_height_;
-
-        game_state_pub_->publish(msg);
-    }
-
-    std::shared_ptr<environment::Environment> env_;
-
-    PlayerState player1_;
-    PlayerState player2_;
-
-    std::vector<Trash> trash_;
-
-    std::unique_ptr<StationObject> station_;
-    std::vector<std::unique_ptr<GameObject>> obstacles_;
-
-    std::vector<double> circle_obstacles_x_;
-    std::vector<double> circle_obstacles_y_;
-    std::vector<double> circle_obstacles_radius_;
-
-    std::vector<double> rectangle_obstacles_x_;
-    std::vector<double> rectangle_obstacles_y_;
-    std::vector<double> rectangle_obstacles_width_;
-    std::vector<double> rectangle_obstacles_height_;
-
-    std::mt19937 rng_;
-
-    bool game_finished_ = false;
-
-    double trash_radius_ = 0.0;
-    double collect_distance_ = 0.0;
-
-    double station_x_ = 0.0;
-    double station_y_ = 0.0;
-    double station_radius_ = 0.0;
-
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player1_odom_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr player2_odom_sub_;
-
-    rclcpp::Publisher<zadanie2_interfaces::msg::GameState>::SharedPtr game_state_pub_;
-    rclcpp::Service<zadanie2_interfaces::srv::ResetGame>::SharedPtr reset_service_;
-
-    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_; // timer na periodicku aktualizaciu hry
 };
 
 int main(int argc, char ** argv)
 {
-    rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<GameNode>());
-    rclcpp::shutdown();
+    rclcpp::init(argc, argv); // inicializacia ROS2
+    rclcpp::spin(std::make_shared<GameNode>()); // spustenie node a cakanie na callbacky
+    rclcpp::shutdown(); // ukoncenie ROS2
     return 0;
 }

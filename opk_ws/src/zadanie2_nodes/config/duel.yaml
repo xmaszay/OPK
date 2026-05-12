@@ -13,7 +13,7 @@ player1:
       initial_theta: 0.0
       ghost_mode: false
       linear_acceleration: 3.0
-      angular_acceleration: 2.0
+      angular_acceleration: 1.0
       linear_emergency_deceleration: 2.0
       angular_emergency_deceleration: 2.0
       command_duration: 0.5
@@ -37,10 +37,11 @@ player1:
       map_resolution: 0.02
       base_frame_id: "player1/base_link"
       max_range: 5.0
-      beam_count: 180
+      beam_count: 360
       first_ray_angle: -3.14159
       last_ray_angle: 3.14159
       publish_period_ms: 100
+      ray_step: 0.02
 
 player2:
   robot_node:
@@ -76,10 +77,11 @@ player2:
       map_resolution: 0.02
       base_frame_id: "player2/base_link"
       max_range: 5.0
-      beam_count: 180
+      beam_count: 360
       first_ray_angle: -3.14159
       last_ray_angle: 3.14159
       publish_period_ms: 100
+      ray_step: 0.02
 
 game_node:
   ros__parameters:
@@ -87,8 +89,12 @@ game_node:
     map_resolution: 0.02
     max_capacity: 3
     trash_count: 12
-    trash_radius: 0.25
+    trash_radius_min: 0.20
+    trash_radius_max: 0.35
+    trash_types: ["paper", "plastic", "glass"]
+    path_min_step: 0.05
     collect_distance: 0.7
+    
     station_x: 21.0
     station_y: 7.5
     station_radius: 0.8
@@ -109,10 +115,19 @@ bot_node:
     station_y: 7.5
     target_distance: 0.8
     linear_speed: 1.5
-    angular_gain: 1.5
+    angular_gain: 1.0
     angle_tolerance: 0.25
 
 keyboard_teleop_node:
   ros__parameters:
     linear_speed: 3.0
+    angular_speed: 1.0
+
+web_node:
+  ros__parameters:
+    port: 8080
+    linear_speed: 3.0
     angular_speed: 1.5
+    map_width: 30.72
+    map_height: 20.48
+    map_path: "/home/peter/Desktop/OPK/opk_ws/src/zadanie1/resources/opk-map.png"

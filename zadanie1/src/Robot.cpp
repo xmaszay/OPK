@@ -48,7 +48,7 @@ bool Robot::isInCollision() const {
     return in_collision_; // vracia spat collision
 }
 
-void Robot::update(const geometry::Twist& velocity, double dt) { 
+void Robot::update(const geometry::Twist& velocity, double dt) { // dt je casovy krok simulacie 
     auto now = std::chrono::steady_clock::now(); // zistujeme ci expiroval prikaz
     double elapsed = std::chrono::duration<double>(now - last_command_time_).count();// spocita kolko casu preslo od posledneho setVelocity
 

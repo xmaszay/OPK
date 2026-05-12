@@ -106,6 +106,7 @@ target_link_libraries(lidar_node
 
 add_executable(game_node
   src/game_node.cpp
+  src/GameLogic.cpp
 )
 
 target_include_directories(game_node PUBLIC
@@ -159,6 +160,17 @@ ament_target_dependencies(visualization_node
   zadanie2_interfaces
 )
 
+add_executable(web_node
+  src/web_node.cpp
+)
+
+ament_target_dependencies(web_node
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  zadanie2_interfaces
+)
 
 install(TARGETS
   robot_node
@@ -168,6 +180,7 @@ install(TARGETS
   keyboard_teleop_node
   bot_node
   visualization_node
+  web_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

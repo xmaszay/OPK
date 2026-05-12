@@ -36,3 +36,8 @@ float64[] rectangle_obstacles_x
 float64[] rectangle_obstacles_y
 float64[] rectangle_obstacles_width
 float64[] rectangle_obstacles_height
+
+float64[] player1_path_x
+float64[] player1_path_y
+float64[] player2_path_x
+float64[] player2_path_y

@@ -98,9 +98,11 @@ new_state.x = new_x;
 new_state.y = new_y;
 new_state.theta = new_theta;
 
-if (collision_cb_ && collision_cb_(new_state)) { // ak callback povie ze novy stav je v kolizii
-    // kolizia, zastav linear pohyb
-    state_.velocity.linear = 0.0; // vynuluje sa linearna rychlost
+if (collision_cb_ && collision_cb_(new_state)) {
+    // Kolizia - nepovolime posun do prekazky,
+    // ale povolime zmenu natocenia, aby sa robot vedel otocit a odist.
+    state_.theta = new_theta;
+    state_.velocity.linear = 0.0;
     in_collision_ = true;
 } else {
     state_ = new_state;
